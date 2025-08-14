@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv; load_dotenv()
 FDC_API_KEY = os.getenv("unDHP2YrNzZ2G6krqWnKrGjluVC6eVeOGgEPxOx4")
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-only")
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent

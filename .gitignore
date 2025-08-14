@@ -1,7 +1,9 @@
 ﻿# Python / Django
 __pycache__/
 *.py[cod]
-*.sqlite3
+
+# Virtual env
+venv/
 
 # Env & secrets
 .env
@@ -9,10 +11,5 @@ __pycache__/
 .env.*
 .env.local
 
-# Virtualenv
-venv/
-.envrc
-
-# IDE
-.vscode/
-.idea/
+# Tooling artifacts
+replacements.txt
