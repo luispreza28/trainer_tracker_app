@@ -3,10 +3,10 @@ from django.db import models
 # Create your models here.
 
 class Nutrients(models.Model):
-    calories = models.FloatField(help_text="kcal per 100g")
-    protein = models.FloatField(help_text="g per 100g")
-    fat = models.FloatField(help_text="g per 100g")
-    carbs = models.FloatField(help_text="g per 100g")
+    calories = models.FloatField(help_text="kcal per 100g", null=True, blank=True)
+    protein = models.FloatField(help_text="g per 100g", null=True, blank=True)
+    fat = models.FloatField(help_text="g per 100g", null=True, blank=True)
+    carbs = models.FloatField(help_text="g per 100g", null=True, blank=True)
     fiber = models.FloatField(help_text="g per 100g", null=True, blank=True)
     sugar = models.FloatField(help_text="g per 100g", null=True, blank=True)
     sodium = models.FloatField(help_text="mg per 100g", null=True, blank=True)

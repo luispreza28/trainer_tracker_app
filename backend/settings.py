@@ -37,6 +37,7 @@ ALLOWED_HOSTS = []
 INSTALLED_APPS = [
     'corsheaders',
     'rest_framework',
+    'rest_framework.authtoken',
     'core',
     'django.contrib.admin',
     'django.contrib.auth',
@@ -60,6 +61,8 @@ CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
     "http://localhost:8080",
 ]
+
+CORS_ALLOW_ALL_ORIGINS = True  # dev only
 
 CORS_URLS_REGEX = r'^/api/.*$'
 
@@ -143,8 +146,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.TokenAuthentication',
         'rest_framework.authentication.SessionAuthentication',
-        'rest_framework.authentication.BasicAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',

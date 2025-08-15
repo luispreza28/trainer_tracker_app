@@ -7,12 +7,13 @@ class NutrientsSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class FoodSerializer(serializers.ModelSerializer):
-    nutrients = NutrientsSerializer()
+    nutrients = NutrientsSerializer(read_only=True)
     class Meta:
         model = Food
         fields = '__all__'
 
 class MealEntrySerializer(serializers.ModelSerializer):
+    user = serializers.HiddenField(default=serializers.CurrentUserDefault())
     class Meta:
         model = MealEntry
         fields = '__all__'
