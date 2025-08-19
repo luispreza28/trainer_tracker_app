@@ -291,3 +291,27 @@ class MealEntryViewSet(viewsets.ModelViewSet):
             "units": {"calories": "kcal", "protein": "g", "carbs": "g", "fat": "g", "fiber": "g", "sugar": "g", "sodium": "mg"},
             "totals": rounded,
         })
+
+    def list(self, request, *args, **kwargs):
+        date_str = request.query_params.get("date")
+        tz_str = request.query_params.get("tz")
+        queryset = self.get_queryset()
+        if date_str:
+            # Timezone logic mirrors summary
+            if tz_str and ZoneInfo:
+                try:
+                    tz = ZoneInfo(tz_str)
+                except Exception:
+                    tz = timezone.get_current_timezone()
+            else:
+                tz = timezone.get_current_timezone()
+            try:
+                target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except ValueError:
+                return Response({"detail": "Invalid date format. Use YYYY-MM-DD."}, status=400)
+            start_local = datetime.combine(target_date, time.min).replace(tzinfo=tz)
+            end_local = datetime.combine(target_date, time.max).replace(tzinfo=tz)
+            start_utc = start_local.astimezone(timezone.utc)
+            end_utc = end_local.astimezone(timezone.utc)
+            queryset = queryset.filter(meal_time__gte=start_utc, meal_time__lte=end_utc)
+        return super().list(request, *args, **kwargs)

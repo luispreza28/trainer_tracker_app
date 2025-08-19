@@ -12,7 +12,12 @@ class AuthService {
   // NEW: save token
   static Future<void> setToken(String token) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_tokenKey, token);
+    var cleaned = token.trim();
+    cleaned = cleaned.replaceFirst(
+      RegExp(r'^token\s+', caseSensitive: false), // strip leading "Token "
+      '',
+    );
+    await prefs.setString(_tokenKey, cleaned);
   }
 
   // NEW: clear token

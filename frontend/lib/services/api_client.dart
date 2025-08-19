@@ -43,12 +43,14 @@ class ApiClient {
   }
 
   /// Build common headers, including token if present.
-  Future<Map<String, String>> _headers() async {
+  Future<Map<String, String>> _headers({bool json = true}) async {
     final token = await AuthService.getToken();
-    return <String, String>{
-      'Content-Type': 'application/json',
-      if (token != null && token.isNotEmpty) 'Authorization': 'Token $token',
-    };
+    final h = <String, String>{'Accept': 'application/json'};
+    if (json) h['Content-Type'] = 'application/json; charset=utf-8';
+    if (token != null && token.trim().isNotEmpty) {
+      h['Authorization'] = 'Token ${token.trim()}'; // <- add prefix exactly once
+    }
+    return h;
   }
 
   /// Import (or create) a Food by barcode via the backend proxy.
@@ -129,6 +131,30 @@ class ApiClient {
       throw ApiException('HTTP ${r.statusCode}: ${r.body}');
     }
     return json.decode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<List<Map<String, dynamic>>> getMealsForDate(DateTime date, {String? tz}) async {
+    final d = DateFormat('yyyy-MM-dd').format(date);
+    final q = tz == null ? 'date=$d' : 'date=$d&tz=${Uri.encodeQueryComponent(tz)}';
+    final uri = Uri.parse('$baseUrl/meals/?$q');
+    final r = await http.get(uri, headers: await _headers()).timeout(const Duration(seconds: 10));
+    if (r.statusCode != 200) throw ApiException('HTTP ${r.statusCode}: ${r.body}');
+    final m = json.decode(r.body) as Map<String, dynamic>;
+    final results = (m['results'] as List).cast<Map<String, dynamic>>();
+    return results;
+  }
+
+  Future<void> deleteMeal(int id) async {
+    final uri = Uri.parse('$baseUrl/meals/$id/');
+    final r = await http.delete(uri, headers: await _headers()).timeout(const Duration(seconds: 10));
+    if (r.statusCode != 204) throw ApiException('HTTP ${r.statusCode}: ${r.body}');
+  }
+
+  Future<void> updateMealQuantity(int id, double grams) async {
+    final uri = Uri.parse('$baseUrl/meals/$id/');
+    final body = json.encode({'quantity': grams});
+    final r = await http.patch(uri, headers: await _headers(), body: body).timeout(const Duration(seconds: 10));
+    if (r.statusCode != 200) throw ApiException('HTTP ${r.statusCode}: ${r.body}');
   }
   
 }
