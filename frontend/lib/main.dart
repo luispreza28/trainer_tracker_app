@@ -37,8 +37,7 @@ class MyApp extends StatelessWidget {
       // Static routes (only if you have static screens)
       routes: {
         BarcodeScreen.routeName: (context) => const BarcodeScreen(),
-        '/token': (_) => const TokenSettingsScreen(), // Commented out, screen does not exist
-        // Add other static routes here if needed
+        TokenSettingsScreen.routeName: (_) => const TokenSettingsScreen(),
       },
       onGenerateRoute: (settings) {
         if (settings.name == '/log-meal') {

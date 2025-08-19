@@ -75,6 +75,9 @@ class _AddToMealScreenState extends State<AddToMealScreen> {
       );
       if (!mounted) return;
       Navigator.pop(context, true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Meal logged!')),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/food.dart';
 import 'auth_service.dart';
+import 'package:intl/intl.dart';
 
 /// Base API exception used by the client.
 class ApiException implements Exception {
@@ -115,4 +116,19 @@ class ApiClient {
       throw ApiException('HTTP $status: ${resp.body}');
     }
   }
+
+  Future<Map<String, dynamic>> getDailySummary(DateTime date, {String? tz}) async {
+    // Ensure intl is imported for DateFormat
+    // Ensure dart:convert and package:http/http.dart are imported
+    final d = DateFormat('yyyy-MM-dd').format(date);
+    final q = tz == null ? 'date=$d' : 'date=$d&tz=${Uri.encodeQueryComponent(tz)}';
+    final uri = Uri.parse('$baseUrl/meals/summary/?$q');
+    final headers = await _headers();
+    final r = await http.get(uri, headers: headers).timeout(const Duration(seconds: 10));
+    if (r.statusCode != 200) {
+      throw ApiException('HTTP ${r.statusCode}: ${r.body}');
+    }
+    return json.decode(r.body) as Map<String, dynamic>;
+  }
+  
 }
