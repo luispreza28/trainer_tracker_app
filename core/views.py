@@ -231,11 +231,23 @@ class NutrientsViewSet(viewsets.ModelViewSet):
     serializer_class = NutrientsSerializer
 
 class MealEntryViewSet(viewsets.ModelViewSet):
+    queryset = MealEntry.objects.all()
     permission_classes = [IsAuthenticated]
     serializer_class = MealEntrySerializer
 
     def get_queryset(self):
-        return MealEntry.objects.filter(user=self.request.user).order_by("-meal_time")
+        # base per-user
+        qs = MealEntry.objects.filter(user=self.request.user).select_related("food__nutrients")
+
+        # optional date filter
+        date_str = self.request.query_params.get("date")
+        tz_str   = self.request.query_params.get("tz") or settings.TIME_ZONE
+        if date_str:
+            start_utc, end_utc = _utc_window_for_local_day(date_str, tz_str)
+            qs = qs.filter(meal_time__gte=start_utc, meal_time__lt=end_utc)  # half-open
+
+        return qs
+        
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
@@ -298,14 +310,3 @@ class MealEntryViewSet(viewsets.ModelViewSet):
             },
             "totals": rounded,
         })
-
-
-    def list(self, request, *args, **kwargs):
-        date_str = request.query_params.get("date")
-        tz_str = request.query_params.get("tz") or settings.TIME_ZONE
-        queryset = self.get_queryset()
-        if date_str:
-            start_utc, end_utc = _utc_window_for_local_day(date_str, tz_str)
-            queryset = queryset.filter(meal_time__gte=start_utc, meal_time__lt=end_utc)
-        self.queryset = queryset
-        return super().list(request, *args, **kwargs)
