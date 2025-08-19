@@ -1,38 +1,32 @@
-// lib/screens/add_to_meal_screen.dart
+// lib/screens/log_meal_screen.dart
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../models/food.dart';
 import '../services/api_client.dart';
 
-class AddToMealScreen extends StatefulWidget {
-  final int foodId;
-  final double defaultGrams;
-  const AddToMealScreen({
-    super.key,
-    required this.foodId,
-    this.defaultGrams = 100.0,
-  });
+class LogMealScreen extends StatefulWidget {
+  final Food food;
+  const LogMealScreen({super.key, required this.food});
 
   @override
-  State<AddToMealScreen> createState() => _AddToMealScreenState();
+  State<LogMealScreen> createState() => _LogMealScreenState();
 }
 
-class _AddToMealScreenState extends State<AddToMealScreen> {
-  final _gramsCtrl = TextEditingController();
+class _LogMealScreenState extends State<LogMealScreen> {
+  final _qtyCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
-  DateTime _when = DateTime.now();
-  bool _saving = false;
+  DateTime? _when;
+  bool _submitting = false;
 
   @override
   void initState() {
     super.initState();
-    _gramsCtrl.text = widget.defaultGrams.toStringAsFixed(
-      widget.defaultGrams.truncateToDouble() == widget.defaultGrams ? 0 : 1,
-    );
+    _when = DateTime.now();
   }
 
   @override
   void dispose() {
-    _gramsCtrl.dispose();
+    _qtyCtrl.dispose();
     _notesCtrl.dispose();
     super.dispose();
   }
@@ -40,14 +34,14 @@ class _AddToMealScreenState extends State<AddToMealScreen> {
   Future<void> _pickDateTime() async {
     final d = await showDatePicker(
       context: context,
-      initialDate: _when,
+      initialDate: _when ?? DateTime.now(),
       firstDate: DateTime(2020),
       lastDate: DateTime(2100),
     );
     if (d == null) return;
     final t = await showTimePicker(
       context: context,
-      initialTime: TimeOfDay.fromDateTime(_when),
+      initialTime: TimeOfDay.fromDateTime(_when ?? DateTime.now()),
     );
     if (t == null) return;
     setState(() {
@@ -55,52 +49,59 @@ class _AddToMealScreenState extends State<AddToMealScreen> {
     });
   }
 
-  Future<void> _save() async {
-    final grams = double.tryParse(_gramsCtrl.text.trim());
-    if (grams == null || grams <= 0) {
+  Future<void> _submit() async {
+    final txt = _qtyCtrl.text.trim();
+    final qty = double.tryParse(txt);
+    if (qty == null || qty <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Enter a valid quantity in grams')),
       );
       return;
     }
-
-    setState(() => _saving = true);
+    setState(() => _submitting = true);
     try {
       final api = ApiClient();
       await api.addMeal(
-        foodId: widget.foodId,
-        quantity: grams,
+        foodId: widget.food.id!,
+        quantity: qty,
         mealTime: _when,
         notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
       );
-      if (!mounted) return;
-      Navigator.pop(context, true);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Meal logged!')),
-      );
+      if (mounted) {
+        Navigator.pop(context, true); // return success
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Meal logged')),
+        );
+      }
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString())),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString())),
+        );
+      }
     } finally {
-      if (mounted) setState(() => _saving = false);
+      if (mounted) setState(() => _submitting = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final whenText = DateFormat('y-MM-dd HH:mm').format(_when);
+    final f = widget.food;
+    final whenText = _when == null
+        ? 'Pick date/time'
+        : DateFormat('y-MM-dd HH:mm').format(_when!);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Log Meal')),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Text(f.name ?? 'Food', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 12),
             TextField(
-              controller: _gramsCtrl,
+              controller: _qtyCtrl,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(
                 labelText: 'Quantity (grams)',
@@ -131,8 +132,8 @@ class _AddToMealScreenState extends State<AddToMealScreen> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: _saving ? null : _save,
-                child: Text(_saving ? 'Saving…' : 'Save'),
+                onPressed: _submitting ? null : _submit,
+                child: Text(_submitting ? 'Saving…' : 'Save'),
               ),
             ),
           ],

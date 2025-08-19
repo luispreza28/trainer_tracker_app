@@ -4,6 +4,12 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.shortcuts import get_object_or_404
 from django.db import transaction, IntegrityError
+from django.utils import timezone
+from datetime import datetime, time
+try:
+    from zoneinfo import ZoneInfo  # py3.9+
+except Exception:
+    ZoneInfo = None
 from .models import Food, Nutrients, MealEntry
 from .serializers import FoodSerializer, NutrientsSerializer, MealEntrySerializer
 from .services import off, fdc
@@ -41,7 +47,7 @@ def import_food_by_barcode(request, code: str):
             carbs=_to_float(nd.get("carbs")),
             fat=_to_float(nd.get("fat")),
             fiber=_to_float(nd.get("fiber")),
-            sugar=_to_float(nd.get("sugars")),   # << model field is 'sugar'
+            sugar=_to_float(nd.get("sugar")),   
             sodium=_to_float(nd.get("sodium")),
         )
         food = Food.objects.create(
@@ -201,15 +207,87 @@ class NutrientsViewSet(viewsets.ModelViewSet):
     serializer_class = NutrientsSerializer
 
 class MealEntryViewSet(viewsets.ModelViewSet):
-    queryset = MealEntry.objects.all()
-    serializer_class = MealEntrySerializer
     permission_classes = [IsAuthenticated]
+    serializer_class = MealEntrySerializer
 
     def get_queryset(self):
-        # Only return the current user's entries
-        return MealEntry.objects.filter(user=self.request.user).order_by("-id")
+        return MealEntry.objects.filter(user=self.request.user).order_by("-meal_time")
 
     def perform_create(self, serializer):
-        # Ensure the entry is saved with the current user
         serializer.save(user=self.request.user)
-    
+
+    @action(detail=False, methods=["get"], url_path="summary")
+    def summary(self, request):
+        """
+        GET /api/meals/summary?date=YYYY-MM-DD[&tz=Area/City]
+        Returns per-user totals for the given local calendar date.
+        Units: calories=kcal, protein=g, carbs=g, fat=g, fiber=g, sugar=g, sodium=mg.
+        """
+        date_str = request.query_params.get("date")
+        tz_str = request.query_params.get("tz")
+
+        # Resolve timezone
+        if tz_str and ZoneInfo:
+            try:
+                tz = ZoneInfo(tz_str)
+            except Exception:
+                tz = timezone.get_current_timezone()
+        else:
+            tz = timezone.get_current_timezone()
+
+        # Resolve target date
+        if date_str:
+            try:
+                target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except ValueError:
+                from rest_framework.response import Response
+                return Response({"detail": "Invalid date format. Use YYYY-MM-DD."}, status=400)
+        else:
+            target_date = timezone.localdate()
+
+        # Local day bounds -> UTC for filtering
+        start_local = datetime.combine(target_date, time.min).replace(tzinfo=tz)
+        end_local = datetime.combine(target_date, time.max).replace(tzinfo=tz)
+        start_utc = start_local.astimezone(timezone.utc)
+        end_utc = end_local.astimezone(timezone.utc)
+
+        qs = (
+            self.get_queryset()
+            .filter(meal_time__gte=start_utc, meal_time__lte=end_utc)
+            .select_related("food__nutrients")
+        )
+
+        totals = {"calories": 0.0, "protein": 0.0, "carbs": 0.0, "fat": 0.0, "fiber": 0.0, "sugar": 0.0, "sodium": 0.0}
+        count = 0
+
+        for me in qs:
+            n = getattr(me.food, "nutrients", None)
+            if not n:
+                continue
+            count += 1
+            factor = float(me.quantity or 0.0) / 100.0  # quantity is grams
+
+            def add(field: str):
+                val = getattr(n, field, None)
+                if val is not None:
+                    totals[field] += float(val) * factor
+
+            add("calories")
+            add("protein")
+            add("carbs")
+            add("fat")
+            add("fiber")
+            add("sugar")
+            add("sodium")  # already mg per 100g -> mg total
+
+        # Round for display (calories & sodium 0dp; macros 2dp)
+        rounded = {k: (round(v, 0) if k in ("calories", "sodium") else round(v, 2)) for k, v in totals.items()}
+
+        from rest_framework.response import Response
+        return Response({
+            "date": target_date.isoformat(),
+            "timezone": str(tz),
+            "entries": count,
+            "units": {"calories": "kcal", "protein": "g", "carbs": "g", "fat": "g", "fiber": "g", "sugar": "g", "sodium": "mg"},
+            "totals": rounded,
+        })
