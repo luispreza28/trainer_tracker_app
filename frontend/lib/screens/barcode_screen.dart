@@ -116,6 +116,11 @@ class _BarcodeScreenState extends State<BarcodeScreen> {
               // Today’s summary (token-aware) right below Import
               const SizedBox(height: 12),
               TodaysSummaryCard(key: _summaryKey, tz: 'America/Los_Angeles'),
+              const SizedBox(height: 12),
+              TodaysMealsList(
+                tz: 'America/Los_Angeles',
+                onChanged: () => _summaryKey.currentState?.refresh(),
+              ),
 
               const SizedBox(height: 12),
               if (_error != null)
@@ -352,6 +357,215 @@ class _TodaysSummaryCardState extends State<TodaysSummaryCard> {
           ),
         );
       },
+    );
+  }
+}
+
+class TodaysMealsList extends StatefulWidget {
+  final String? tz;
+  final VoidCallback? onChanged; // call to refresh summary when meals change
+  const TodaysMealsList({super.key, this.tz, this.onChanged});
+
+  @override
+  State<TodaysMealsList> createState() => _TodaysMealsListState();
+}
+
+class _TodaysMealsListState extends State<TodaysMealsList> {
+  Future<List<Map<String, dynamic>>>? _future;
+  bool _noToken = false;
+  DateTime _date = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    _prepare();
+  }
+
+  Future<void> _prepare() async {
+    final token = await AuthService.getToken();
+    if (!mounted) return;
+    if (token == null || token.isEmpty) {
+      setState(() {
+        _noToken = true;
+        _future = null;
+      });
+    } else {
+      setState(() {
+        _noToken = false;
+        _future = ApiClient().getMealsForDate(_date, tz: widget.tz);
+      });
+    }
+  }
+
+  void _load() {
+    setState(() {
+      _future = ApiClient().getMealsForDate(_date, tz: widget.tz);
+    });
+  }
+
+  Future<void> _delete(int id) async {
+    await ApiClient().deleteMeal(id);
+    _load();
+    widget.onChanged?.call();
+  }
+
+  Future<void> _editQuantity(int id, double current) async {
+    final ctrl = TextEditingController(text: current.toStringAsFixed(0));
+    final grams = await showDialog<double>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Edit quantity (g)'),
+        content: TextField(
+          controller: ctrl,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(border: OutlineInputBorder()),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () {
+              final v = double.tryParse(ctrl.text.trim());
+              Navigator.pop(ctx, v);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (grams != null) {
+      await ApiClient().updateMealQuantity(id, grams);
+      _load();
+      widget.onChanged?.call();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final df = DateFormat('yyyy-MM-dd');
+    final nf0 = NumberFormat('#,##0');
+    final nf2 = NumberFormat('#,##0.##');
+
+    if (_noToken) {
+      return Card(
+        child: ListTile(
+          title: const Text("Today's meals"),
+          subtitle: const Text('API token not set. Open Token settings to add your DRF token.'),
+          trailing: TextButton(
+            onPressed: () {
+              Navigator.pushNamed(context, TokenSettingsScreen.routeName)
+                  .then((saved) => _prepare());
+            },
+            child: const Text('Set token'),
+          ),
+        ),
+      );
+    }
+
+    if (_future == null) {
+      return const Card(
+        child: ListTile(title: Text("Today's meals"), subtitle: Text('Loading…')),
+      );
+    }
+
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _future,
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Card(
+            child: ListTile(title: Text("Today's meals"), subtitle: Text('Loading…')),
+          );
+        }
+        if (snap.hasError) {
+          return Card(
+            child: ListTile(
+              title: const Text("Today's meals"),
+              subtitle: Text('Error: ${snap.error}'),
+              trailing: IconButton(icon: const Icon(Icons.refresh), onPressed: _load),
+            ),
+          );
+        }
+
+        final items = snap.data!;
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text("Today's meals (${df.format(_date)})",
+                          style: Theme.of(context).textTheme.titleMedium),
+                    ),
+                    IconButton(icon: const Icon(Icons.refresh), tooltip: 'Refresh', onPressed: _load),
+                  ],
+                ),
+                if (items.isEmpty)
+                  Text('No meals yet.', style: Theme.of(context).textTheme.bodySmall),
+                for (final m in items) ...[
+                  const Divider(height: 16),
+                  _MealRow(
+                    id: m['id'] as int,
+                    name: (m['food_name'] ?? 'Food') as String,
+                    brand: (m['brand'] ?? '') as String,
+                    grams: ((m['quantity'] ?? 0) as num).toDouble(),
+                    kcal: (((m['totals']?['calories']) ?? 0) as num).toDouble(),
+                    onEdit: _editQuantity,
+                    onDelete: _delete,
+                    nf0: nf0,
+                  ),
+                ]
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+
+class _MealRow extends StatelessWidget {
+  final int id;
+  final String name;
+  final String brand;
+  final double grams;
+  final double kcal;
+  final void Function(int id, double current) onEdit;
+  final void Function(int id) onDelete;
+  final NumberFormat nf0;
+
+  const _MealRow({
+    required this.id,
+    required this.name,
+    required this.brand,
+    required this.grams,
+    required this.kcal,
+    required this.onEdit,
+    required this.onDelete,
+    required this.nf0,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(name, style: Theme.of(context).textTheme.bodyMedium),
+              if (brand.isNotEmpty)
+                Text(brand, style: Theme.of(context).textTheme.bodySmall),
+              Text('${nf0.format(grams)} g • ${nf0.format(kcal)} kcal',
+                style: Theme.of(context).textTheme.labelSmall),
+            ],
+          ),
+        ),
+        IconButton(icon: const Icon(Icons.edit), tooltip: 'Edit', onPressed: () => onEdit(id, grams)),
+        IconButton(icon: const Icon(Icons.delete_outline), tooltip: 'Delete', onPressed: () => onDelete(id)),
+      ],
     );
   }
 }
