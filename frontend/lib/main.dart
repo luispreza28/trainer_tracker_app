@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:frontend/screens/barcode_screen.dart';
+import 'screens/barcode_screen.dart';
 import 'screens/add_to_meal_screen.dart';
+import 'screens/token_settings_screen.dart';
 
 void main() {
   runApp(const MyApp());
@@ -13,7 +14,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'AI Personal Trainer',
       theme: ThemeData(
         // This is the theme of your application.
         //
@@ -32,9 +33,26 @@ class MyApp extends StatelessWidget {
         // tested with just a hot reload.
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const BarcodeScreen(),
+      // Static routes (only if you have static screens)
       routes: {
         BarcodeScreen.routeName: (context) => const BarcodeScreen(),
+        '/token': (_) => const TokenSettingsScreen(), // Commented out, screen does not exist
+        // Add other static routes here if needed
+      },
+      onGenerateRoute: (settings) {
+        if (settings.name == '/log-meal') {
+          final args = settings.arguments as Map<String, dynamic>;
+          final int foodId = args['foodId'] as int;
+          final double defaultGrams = (args['defaultGrams'] as num?)?.toDouble() ?? 100.0;
+          return MaterialPageRoute(
+            builder: (_) => AddToMealScreen(
+              foodId: foodId,
+              defaultGrams: defaultGrams,
+            ),
+          );
+        }
+        return null;
       },
     );
   }

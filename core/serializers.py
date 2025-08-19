@@ -14,6 +14,10 @@ class FoodSerializer(serializers.ModelSerializer):
 
 class MealEntrySerializer(serializers.ModelSerializer):
     user = serializers.HiddenField(default=serializers.CurrentUserDefault())
+    food_name = serializers.CharField(source="food.name", read_only=True)
+    food_brand = serializers.CharField(source="food.brand", read_only=True)
+
     class Meta:
         model = MealEntry
-        fields = '__all__'
+        fields = ("id","user","food","food_name","food_brand","quantity","meal_time","notes")
+        read_only_fields = ("id",)

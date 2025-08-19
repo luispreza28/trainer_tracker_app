@@ -41,7 +41,7 @@ def import_food_by_barcode(request, code: str):
             carbs=_to_float(nd.get("carbs")),
             fat=_to_float(nd.get("fat")),
             fiber=_to_float(nd.get("fiber")),
-            sugar=_to_float(nd.get("sugars")),   # << model field is 'sugar'
+            sugar=_to_float(nd.get("sugar")),   
             sodium=_to_float(nd.get("sodium")),
         )
         food = Food.objects.create(
@@ -201,15 +201,11 @@ class NutrientsViewSet(viewsets.ModelViewSet):
     serializer_class = NutrientsSerializer
 
 class MealEntryViewSet(viewsets.ModelViewSet):
-    queryset = MealEntry.objects.all()
-    serializer_class = MealEntrySerializer
     permission_classes = [IsAuthenticated]
+    serializer_class = MealEntrySerializer
 
     def get_queryset(self):
-        # Only return the current user's entries
-        return MealEntry.objects.filter(user=self.request.user).order_by("-id")
+        return MealEntry.objects.filter(user=self.request.user).order_by("-meal_time")
 
     def perform_create(self, serializer):
-        # Ensure the entry is saved with the current user
         serializer.save(user=self.request.user)
-    
