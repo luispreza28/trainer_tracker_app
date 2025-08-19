@@ -2,10 +2,13 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.exceptions import ValidationError
 from django.shortcuts import get_object_or_404
 from django.db import transaction, IntegrityError
-from django.utils import timezone
-from datetime import datetime, time
+from django.utils import timezone as dj_tz
+from django.conf import settings
+from datetime import datetime, time, timedelta, timezone as dt_tz
+from zoneinfo import ZoneInfo
 try:
     from zoneinfo import ZoneInfo  # py3.9+
 except Exception:
@@ -16,7 +19,28 @@ from .services import off, fdc
 from .services.off import normalize_off_payload 
 import re
 
- 
+def _utc_window_for_local_day(date_str: str, tz_name: str | None):
+    """
+    Given a YYYY-MM-DD and an IANA tz name, return [start_utc, end_utc)
+    that exactly covers that local calendar day.
+    """
+    try:
+        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        raise ValidationError({"detail": "Invalid date format. Use YYYY-MM-DD."})
+
+    try:
+        tz = ZoneInfo(tz_name) if tz_name else ZoneInfo(settings.TIME_ZONE)
+    except Exception:
+        tz = ZoneInfo(settings.TIME_ZONE)
+
+    start_local = datetime.combine(d, time.min, tzinfo=tz)
+    next_day_local = start_local + timedelta(days=1)
+
+    start_utc = start_local.astimezone(dt_tz.utc)
+    end_utc   = next_day_local.astimezone(dt_tz.utc)
+    return start_utc, end_utc
+
 def _to_float(v):
     try:
         return float(v) if v not in ("", None) else None
@@ -207,11 +231,23 @@ class NutrientsViewSet(viewsets.ModelViewSet):
     serializer_class = NutrientsSerializer
 
 class MealEntryViewSet(viewsets.ModelViewSet):
+    queryset = MealEntry.objects.all()
     permission_classes = [IsAuthenticated]
     serializer_class = MealEntrySerializer
 
     def get_queryset(self):
-        return MealEntry.objects.filter(user=self.request.user).order_by("-meal_time")
+        # base per-user
+        qs = MealEntry.objects.filter(user=self.request.user).select_related("food__nutrients")
+
+        # optional date filter
+        date_str = self.request.query_params.get("date")
+        tz_str   = self.request.query_params.get("tz") or settings.TIME_ZONE
+        if date_str:
+            start_utc, end_utc = _utc_window_for_local_day(date_str, tz_str)
+            qs = qs.filter(meal_time__gte=start_utc, meal_time__lt=end_utc)  # half-open
+
+        return qs
+        
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
@@ -224,94 +260,53 @@ class MealEntryViewSet(viewsets.ModelViewSet):
         Units: calories=kcal, protein=g, carbs=g, fat=g, fiber=g, sugar=g, sodium=mg.
         """
         date_str = request.query_params.get("date")
-        tz_str = request.query_params.get("tz")
+        tz_name  = request.query_params.get("tz") or settings.TIME_ZONE
+        if not date_str:
+            # keep API strict; your client can always pass today's date
+            raise ValidationError({"detail": "Invalid date format. Use YYYY-MM-DD."})
 
-        # Resolve timezone
-        if tz_str and ZoneInfo:
-            try:
-                tz = ZoneInfo(tz_str)
-            except Exception:
-                tz = timezone.get_current_timezone()
-        else:
-            tz = timezone.get_current_timezone()
-
-        # Resolve target date
-        if date_str:
-            try:
-                target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-            except ValueError:
-                from rest_framework.response import Response
-                return Response({"detail": "Invalid date format. Use YYYY-MM-DD."}, status=400)
-        else:
-            target_date = timezone.localdate()
-
-        # Local day bounds -> UTC for filtering
-        start_local = datetime.combine(target_date, time.min).replace(tzinfo=tz)
-        end_local = datetime.combine(target_date, time.max).replace(tzinfo=tz)
-        start_utc = start_local.astimezone(timezone.utc)
-        end_utc = end_local.astimezone(timezone.utc)
+        start_utc, end_utc = _utc_window_for_local_day(date_str, tz_name)
 
         qs = (
             self.get_queryset()
-            .filter(meal_time__gte=start_utc, meal_time__lte=end_utc)
+            .filter(meal_time__gte=start_utc, meal_time__lt=end_utc)   # half-open window
             .select_related("food__nutrients")
         )
 
-        totals = {"calories": 0.0, "protein": 0.0, "carbs": 0.0, "fat": 0.0, "fiber": 0.0, "sugar": 0.0, "sodium": 0.0}
-        count = 0
+        totals = {
+            "calories": 0.0, "protein": 0.0, "carbs": 0.0,
+            "fat": 0.0, "fiber": 0.0, "sugar": 0.0, "sodium": 0.0,
+        }
 
+        count = 0
         for me in qs:
             n = getattr(me.food, "nutrients", None)
             if not n:
                 continue
             count += 1
-            factor = float(me.quantity or 0.0) / 100.0  # quantity is grams
+            factor = float(me.quantity or 0.0) / 100.0  # grams -> per-100g scale
 
             def add(field: str):
                 val = getattr(n, field, None)
                 if val is not None:
                     totals[field] += float(val) * factor
 
-            add("calories")
-            add("protein")
-            add("carbs")
-            add("fat")
-            add("fiber")
-            add("sugar")
-            add("sodium")  # already mg per 100g -> mg total
+            for key in ("calories", "protein", "carbs", "fat", "fiber", "sugar", "sodium"):
+                add(key)
 
-        # Round for display (calories & sodium 0dp; macros 2dp)
-        rounded = {k: (round(v, 0) if k in ("calories", "sodium") else round(v, 2)) for k, v in totals.items()}
+        # Optional rounding for display
+        rounded = {
+            k: (round(v, 0) if k in ("calories", "sodium") else round(v, 2))
+            for k, v in totals.items()
+        }
 
-        from rest_framework.response import Response
         return Response({
-            "date": target_date.isoformat(),
-            "timezone": str(tz),
+            "date": date_str,
+            "timezone": tz_name,
             "entries": count,
-            "units": {"calories": "kcal", "protein": "g", "carbs": "g", "fat": "g", "fiber": "g", "sugar": "g", "sodium": "mg"},
+            "units": {
+                "calories": "kcal", "protein": "g", "carbs": "g",
+                "fat": "g", "fiber": "g", "sugar": "g", "sodium": "mg",
+            },
             "totals": rounded,
         })
-
-    def list(self, request, *args, **kwargs):
-        date_str = request.query_params.get("date")
-        tz_str = request.query_params.get("tz")
-        queryset = self.get_queryset()
-        if date_str:
-            # Timezone logic mirrors summary
-            if tz_str and ZoneInfo:
-                try:
-                    tz = ZoneInfo(tz_str)
-                except Exception:
-                    tz = timezone.get_current_timezone()
-            else:
-                tz = timezone.get_current_timezone()
-            try:
-                target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-            except ValueError:
-                return Response({"detail": "Invalid date format. Use YYYY-MM-DD."}, status=400)
-            start_local = datetime.combine(target_date, time.min).replace(tzinfo=tz)
-            end_local = datetime.combine(target_date, time.max).replace(tzinfo=tz)
-            start_utc = start_local.astimezone(timezone.utc)
-            end_utc = end_local.astimezone(timezone.utc)
-            queryset = queryset.filter(meal_time__gte=start_utc, meal_time__lte=end_utc)
-        return super().list(request, *args, **kwargs)
