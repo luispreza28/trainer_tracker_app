@@ -20,6 +20,14 @@ class _BarcodeScreenState extends State<BarcodeScreen> {
   final _codeCtrl = TextEditingController();
   final _summaryKey = GlobalKey<_TodaysSummaryCardState>(); // ⬅️ key to call refresh()
 
+  final String _tz = 'America/Los_Angeles';
+  DateTime _selectedDate = (() {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day);
+  })();
+
+String _dateStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+
   bool _loading = false;
   String? _error;
   Food? _food;
@@ -70,6 +78,22 @@ class _BarcodeScreenState extends State<BarcodeScreen> {
     return fmt.format(v);
   }
 
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      helpText: 'Select day',
+    );
+    if (picked != null) {
+      setState(() {
+        _selectedDate = DateTime(picked.year, picked.month, picked.day);
+        _dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final f = _food;
@@ -113,13 +137,60 @@ class _BarcodeScreenState extends State<BarcodeScreen> {
                 child: _loading ? const Text('Importing…') : const Text('Import'),
               ),
 
+              // Date picker row
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _pickDate,
+                      icon: const Icon(Icons.calendar_today, size: 18),
+                      label: Text(_dateStr),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton(
+                      onPressed: () {
+                        final now = DateTime.now();
+                        setState(() {
+                          _selectedDate = DateTime(now.year, now.month, now.day);
+                          _dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
+                        });
+                      },
+                      child: const Text('Today'),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        final y = DateTime.now().subtract(const Duration(days: 1));
+                        setState(() {
+                          _selectedDate = DateTime(y.year, y.month, y.day);
+                          _dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
+                        });
+                      },
+                      child: const Text('Yesterday'),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      tooltip: 'Refresh cards',
+                      onPressed: () => setState(() {}),
+                      icon: const Icon(Icons.refresh),
+                    ),
+                  ],
+                ),
+              ),
+
               // Today’s summary (token-aware) right below Import
               const SizedBox(height: 12),
-              TodaysSummaryCard(key: _summaryKey, tz: 'America/Los_Angeles'),
+              TodaysSummaryCard(
+                key: ValueKey('summary-$_dateStr'),
+                tz: _tz,
+                date: _dateStr,
+              ),
               const SizedBox(height: 12),
               TodaysMealsList(
-                tz: 'America/Los_Angeles',
-                onChanged: () => _summaryKey.currentState?.refresh(),
+                key: ValueKey('meals-$_dateStr'),
+                tz: _tz,
+                date: _dateStr,
+                onChanged: () => setState(() {}),
               ),
 
               const SizedBox(height: 12),
@@ -200,8 +271,13 @@ class _NutrientRow extends StatelessWidget {
 
 /// "Today's Summary" card (token-aware + refresh)
 class TodaysSummaryCard extends StatefulWidget {
-  final String? tz; // e.g., 'America/Los_Angeles'
-  const TodaysSummaryCard({super.key, this.tz});
+  final String tz;
+  final String date;
+  const TodaysSummaryCard({
+    super.key,
+    required this.tz,
+    required this.date,
+  });
 
   @override
   State<TodaysSummaryCard> createState() => _TodaysSummaryCardState();
@@ -231,14 +307,22 @@ class _TodaysSummaryCardState extends State<TodaysSummaryCard> {
     } else {
       setState(() {
         _noToken = false;
-        _future = ApiClient().getDailySummary(DateTime.now(), tz: widget.tz);
+        final date = widget.date;
+        _future = ApiClient().getDailySummary(
+          DateFormat('yyyy-MM-dd').parse(date),
+          tz: widget.tz,
+        );
       });
     }
   }
 
   void _refresh() {
     setState(() {
-      _future = ApiClient().getDailySummary(DateTime.now(), tz: widget.tz);
+      final date = widget.date;
+      _future = ApiClient().getDailySummary(
+        DateFormat('yyyy-MM-dd').parse(date),
+        tz: widget.tz,
+      );
     });
   }
 
@@ -362,10 +446,15 @@ class _TodaysSummaryCardState extends State<TodaysSummaryCard> {
 }
 
 class TodaysMealsList extends StatefulWidget {
-  final String? tz;
+  final String tz;
+  final String date;
   final VoidCallback? onChanged; // call to refresh summary when meals change
-  const TodaysMealsList({super.key, this.tz, this.onChanged});
-
+  const TodaysMealsList({
+    super.key,
+    required this.tz,
+    required this.date,
+    this.onChanged,
+  });
   @override
   State<TodaysMealsList> createState() => _TodaysMealsListState();
 }
@@ -373,7 +462,6 @@ class TodaysMealsList extends StatefulWidget {
 class _TodaysMealsListState extends State<TodaysMealsList> {
   Future<List<Map<String, dynamic>>>? _future;
   bool _noToken = false;
-  DateTime _date = DateTime.now();
 
   @override
   void initState() {
@@ -392,14 +480,20 @@ class _TodaysMealsListState extends State<TodaysMealsList> {
     } else {
       setState(() {
         _noToken = false;
-        _future = ApiClient().getMealsForDate(_date, tz: widget.tz);
+        _future = ApiClient().getMealsForDate(
+          DateFormat('yyyy-MM-dd').parse(widget.date),
+          tz: widget.tz,
+        );
       });
     }
   }
 
   void _load() {
     setState(() {
-      _future = ApiClient().getMealsForDate(_date, tz: widget.tz);
+      _future = ApiClient().getMealsForDate(
+        DateFormat('yyyy-MM-dd').parse(widget.date),
+        tz: widget.tz,
+      );
     });
   }
 
@@ -495,7 +589,7 @@ class _TodaysMealsListState extends State<TodaysMealsList> {
                 Row(
                   children: [
                     Expanded(
-                      child: Text("Today's meals (${df.format(_date)})",
+                      child: Text("Today's meals (${df.format(DateFormat('yyyy-MM-dd').parse(widget.date))})",
                           style: Theme.of(context).textTheme.titleMedium),
                     ),
                     IconButton(icon: const Icon(Icons.refresh), tooltip: 'Refresh', onPressed: _load),
