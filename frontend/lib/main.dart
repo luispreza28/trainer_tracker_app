@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'screens/barcode_screen.dart';
 import 'screens/add_to_meal_screen.dart';
 import 'screens/token_settings_screen.dart';
+import 'screens/goals_screen.dart';
 
 void main() {
   runApp(const MyApp());
@@ -38,6 +39,7 @@ class MyApp extends StatelessWidget {
       routes: {
         BarcodeScreen.routeName: (context) => const BarcodeScreen(),
         TokenSettingsScreen.routeName: (_) => const TokenSettingsScreen(),
+        GoalsScreen.routeName: (_) => const GoalsScreen(),
       },
       onGenerateRoute: (settings) {
         if (settings.name == '/log-meal') {

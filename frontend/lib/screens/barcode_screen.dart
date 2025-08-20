@@ -7,6 +7,8 @@ import '../services/auth_service.dart';
 import '../models/food.dart';
 import 'add_to_meal_screen.dart';
 import 'token_settings_screen.dart';
+import 'goals_screen.dart';
+import 'package:frontend/services/goals_service.dart';
 
 class BarcodeScreen extends StatefulWidget {
   static const routeName = '/barcode';
@@ -170,6 +172,15 @@ String _dateStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
                     ),
                     const Spacer(),
                     IconButton(
+                      tooltip: 'Goals',
+                      icon: const Icon(Icons.flag_outlined),
+                      onPressed: () {
+                        Navigator.pushNamed(context, '/goals').then((saved) {
+                          if (saved == true) setState(() {});
+                        });
+                      },
+                    ),
+                    IconButton(
                       tooltip: 'Refresh cards',
                       onPressed: () => setState(() {}),
                       icon: const Icon(Icons.refresh),
@@ -286,6 +297,7 @@ class TodaysSummaryCard extends StatefulWidget {
 class _TodaysSummaryCardState extends State<TodaysSummaryCard> {
   Future<Map<String, dynamic>>? _future;
   bool _noToken = false;
+  Map<String, double> _goals = {};
 
   @override
   void initState() {
@@ -303,10 +315,13 @@ class _TodaysSummaryCardState extends State<TodaysSummaryCard> {
       setState(() {
         _noToken = true;
         _future = null;
+        _goals = {};
       });
     } else {
+      final goals = await GoalsService().getGoals();
       setState(() {
         _noToken = false;
+        _goals = goals;
         final date = widget.date;
         _future = ApiClient().getDailySummary(
           DateFormat('yyyy-MM-dd').parse(date),
@@ -331,17 +346,36 @@ class _TodaysSummaryCardState extends State<TodaysSummaryCard> {
     final nf0 = NumberFormat('#,##0');    // calories, sodium
     final nf2 = NumberFormat('#,##0.##'); // grams
 
-    Widget row(String label, String value, String unit) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: Row(
-          children: [
-            SizedBox(width: 90, child: Text(label)),
-            const SizedBox(width: 8),
-            Text(value),
-            if (unit.isNotEmpty) Text(' $unit'),
-          ],
-        ),
+    Widget metricRow(String key, String label, String value, String unit) {
+      final goal = _goals[key] ?? 0.0;
+      final total = double.tryParse(value.replaceAll(',', '')) ?? 0.0;
+      final pct = (goal > 0) ? (total / goal).clamp(0.0, 1.0) : 0.0;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              SizedBox(width: 90, child: Text(label)),
+              const SizedBox(width: 8),
+              Text(value),
+              if (unit.isNotEmpty) Text(' $unit'),
+            ],
+          ),
+          if (goal > 0)
+            Padding(
+              padding: const EdgeInsets.only(left: 8, top: 2, bottom: 6, right: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Show progress bar capped at 1.0 and percent of goal
+                  LinearProgressIndicator(value: pct, minHeight: 6),
+                  const SizedBox(height: 2),
+                  Text('${(total / goal * 100).clamp(0, 999).toStringAsFixed(0)}% of goal',
+                      style: Theme.of(context).textTheme.labelSmall),
+                ],
+              ),
+            ),
+        ],
       );
     }
 
@@ -429,13 +463,13 @@ class _TodaysSummaryCardState extends State<TodaysSummaryCard> {
                 if (entries == 0)
                   Text('No meals logged yet.',
                       style: Theme.of(context).textTheme.bodySmall),
-                row('Calories', nf0.format(totals['calories'] ?? 0), units['calories'] ?? 'kcal'),
-                row('Protein',  nf2.format(totals['protein']  ?? 0), units['protein']  ?? 'g'),
-                row('Carbs',    nf2.format(totals['carbs']    ?? 0), units['carbs']    ?? 'g'),
-                row('Fat',      nf2.format(totals['fat']      ?? 0), units['fat']      ?? 'g'),
-                row('Fiber',    nf2.format(totals['fiber']    ?? 0), units['fiber']    ?? 'g'),
-                row('Sugar',    nf2.format(totals['sugar']    ?? 0), units['sugar']    ?? 'g'),
-                row('Sodium',   nf0.format(totals['sodium']   ?? 0), units['sodium']   ?? 'mg'),
+                metricRow('goal_calories', 'Calories', nf0.format(totals['calories'] ?? 0), units['calories'] ?? 'kcal'),
+                metricRow('goal_protein',  'Protein',  nf2.format(totals['protein']  ?? 0), units['protein']  ?? 'g'),
+                metricRow('goal_carbs',    'Carbs',    nf2.format(totals['carbs']    ?? 0), units['carbs']    ?? 'g'),
+                metricRow('goal_fat',      'Fat',      nf2.format(totals['fat']      ?? 0), units['fat']      ?? 'g'),
+                metricRow('goal_fiber',    'Fiber',    nf2.format(totals['fiber']    ?? 0), units['fiber']    ?? 'g'),
+                metricRow('goal_sugar',    'Sugar',    nf2.format(totals['sugar']    ?? 0), units['sugar']    ?? 'g'),
+                metricRow('goal_sodium',   'Sodium',   nf0.format(totals['sodium']   ?? 0), units['sodium']   ?? 'mg'),
               ],
             ),
           ),

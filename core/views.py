@@ -236,7 +236,9 @@ class MealEntryViewSet(viewsets.ModelViewSet):
     serializer_class = MealEntrySerializer
 
     def get_queryset(self):
-        # base per-user
+        # Meals list and summary both use this method, which applies the shared _utc_window_for_local_day helper
+        # to ensure the same half-open [start_local, next_day_local) window in UTC, per PRD. Also uses select_related
+        # for efficient nutrient access.
         qs = MealEntry.objects.filter(user=self.request.user).select_related("food__nutrients")
 
         # optional date filter
@@ -259,6 +261,8 @@ class MealEntryViewSet(viewsets.ModelViewSet):
         Returns per-user totals for the given local calendar date.
         Units: calories=kcal, protein=g, carbs=g, fat=g, fiber=g, sugar=g, sodium=mg.
         """
+        # Uses the same _utc_window_for_local_day helper and queryset logic as the meals list endpoint
+        # to guarantee the summary and list are always aligned for the selected day and timezone.
         date_str = request.query_params.get("date")
         tz_name  = request.query_params.get("tz") or settings.TIME_ZONE
         if not date_str:
