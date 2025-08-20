@@ -13,3 +13,4 @@ venv/
 
 # Tooling artifacts
 replacements.txt
+*.egg-info/
