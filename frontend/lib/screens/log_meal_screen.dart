@@ -38,11 +38,14 @@ class _LogMealScreenState extends State<LogMealScreen> {
       firstDate: DateTime(2020),
       lastDate: DateTime(2100),
     );
+    if (!mounted) return;
     if (d == null) return;
+    
     final t = await showTimePicker(
       context: context,
       initialTime: TimeOfDay.fromDateTime(_when ?? DateTime.now()),
     );
+    if (!mounted) return;
     if (t == null) return;
     setState(() {
       _when = DateTime(d.year, d.month, d.day, t.hour, t.minute);
@@ -52,6 +55,7 @@ class _LogMealScreenState extends State<LogMealScreen> {
   Future<void> _submit() async {
     final txt = _qtyCtrl.text.trim();
     final qty = double.tryParse(txt);
+    
     if (qty == null || qty <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Enter a valid quantity in grams')),

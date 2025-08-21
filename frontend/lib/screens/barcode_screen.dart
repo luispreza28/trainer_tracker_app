@@ -1,12 +1,13 @@
 // lib/screens/barcode_screen.dart
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../models/food.dart';
 import 'add_to_meal_screen.dart';
 import 'token_settings_screen.dart';
+import 'goals_screen.dart';
+import '../services/goals_service.dart';
 
 class BarcodeScreen extends StatefulWidget {
   static const routeName = '/barcode';
@@ -18,7 +19,7 @@ class BarcodeScreen extends StatefulWidget {
 
 class _BarcodeScreenState extends State<BarcodeScreen> {
   final _codeCtrl = TextEditingController();
-  final _summaryKey = GlobalKey<_TodaysSummaryCardState>(); // ⬅️ key to call refresh()
+  final GlobalKey<_TodaysSummaryCardState> _summaryKey = GlobalKey<_TodaysSummaryCardState>(); // ⬅️ key to call refresh()
 
   final String _tz = 'America/Los_Angeles';
   DateTime _selectedDate = (() {
@@ -147,6 +148,20 @@ String _dateStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
                       icon: const Icon(Icons.calendar_today, size: 18),
                       label: Text(_dateStr),
                     ),
+                    IconButton(
+                      icon: const Icon(Icons.flag),
+                      tooltip: 'Goals',
+                      onPressed: () async {
+                        final updated = await Navigator.push<bool>(
+                          context,
+                          MaterialPageRoute(builder: (_) => const GoalsScreen()),
+                        );
+                        if (!mounted) return;
+                        if (updated == true) {
+                          _summaryKey.currentState?.refreshGoals();
+                        }
+                      },
+                    ),
                     const SizedBox(width: 8),
                     TextButton(
                       onPressed: () {
@@ -181,7 +196,7 @@ String _dateStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
               // Today’s summary (token-aware) right below Import
               const SizedBox(height: 12),
               TodaysSummaryCard(
-                key: ValueKey('summary-$_dateStr'),
+                key: _summaryKey,
                 tz: _tz,
                 date: _dateStr,
               ),
@@ -269,7 +284,7 @@ class _NutrientRow extends StatelessWidget {
   }
 }
 
-/// "Today's Summary" card (token-aware + refresh)
+/// "Today's Summary" card (token-aware   refresh)
 class TodaysSummaryCard extends StatefulWidget {
   final String tz;
   final String date;
@@ -286,6 +301,7 @@ class TodaysSummaryCard extends StatefulWidget {
 class _TodaysSummaryCardState extends State<TodaysSummaryCard> {
   Future<Map<String, dynamic>>? _future;
   bool _noToken = false;
+  Map<String, double> _goals = {};
 
   @override
   void initState() {
@@ -303,10 +319,14 @@ class _TodaysSummaryCardState extends State<TodaysSummaryCard> {
       setState(() {
         _noToken = true;
         _future = null;
+        _goals = {};
       });
     } else {
+      final goals = await GoalsService().getGoals();
+      if (!mounted) return;
       setState(() {
         _noToken = false;
+        _goals = goals;
         final date = widget.date;
         _future = ApiClient().getDailySummary(
           DateFormat('yyyy-MM-dd').parse(date),
@@ -326,25 +346,17 @@ class _TodaysSummaryCardState extends State<TodaysSummaryCard> {
     });
   }
 
+  Future<void> refreshGoals() async {
+    final goals = await GoalsService().getGoals();
+    if (!mounted) return;
+    setState(() {
+      _goals = goals;
+      _future = ApiClient().getDailySummary(DateFormat('yyyy-MM-dd').parse(widget.date), tz: widget.tz);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    final nf0 = NumberFormat('#,##0');    // calories, sodium
-    final nf2 = NumberFormat('#,##0.##'); // grams
-
-    Widget row(String label, String value, String unit) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: Row(
-          children: [
-            SizedBox(width: 90, child: Text(label)),
-            const SizedBox(width: 8),
-            Text(value),
-            if (unit.isNotEmpty) Text(' $unit'),
-          ],
-        ),
-      );
-    }
-
     if (_noToken) {
       return Card(
         margin: const EdgeInsets.only(bottom: 12),
@@ -402,7 +414,35 @@ class _TodaysSummaryCardState extends State<TodaysSummaryCard> {
         final totals = (data['totals'] as Map).cast<String, dynamic>();
         final units = (data['units'] as Map).cast<String, dynamic>();
         final entries = (data['entries'] as num?)?.toInt() ?? 0;
-
+        final nf2 = NumberFormat('#,##0.00'); // for grams
+        final nf0 = NumberFormat('#,##0');    // for kcal / mg
+        // helper to render a metric + goal progress
+        Widget metricRowVal(String key, String label, String value, String unit) {
+          final goal = _goals[key] ?? 0.0;
+          final total = (totals[key] as num?)?.toDouble() ?? 0.0;
+          final pct = (goal > 0) ? (total / goal).clamp(0.0, 1.0) : 0.0;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  SizedBox(width: 90, child: Text(label)),
+                  const SizedBox(width: 8),
+                  Text(value),
+                  if (unit.isNotEmpty) Text(' $unit'),
+                ],
+              ),
+              const SizedBox(height: 4),
+              if (goal > 0) LinearProgressIndicator(value: pct, minHeight: 6),
+              if (goal > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2, bottom: 6),
+                  child: Text('Goal: ${NumberFormat('#,##0.##').format(goal)} $unit',
+                      style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                ),
+            ],
+          );
+        }
         return Card(
           margin: const EdgeInsets.only(bottom: 12),
           child: Padding(
@@ -428,14 +468,14 @@ class _TodaysSummaryCardState extends State<TodaysSummaryCard> {
                 const SizedBox(height: 8),
                 if (entries == 0)
                   Text('No meals logged yet.',
-                      style: Theme.of(context).textTheme.bodySmall),
-                row('Calories', nf0.format(totals['calories'] ?? 0), units['calories'] ?? 'kcal'),
-                row('Protein',  nf2.format(totals['protein']  ?? 0), units['protein']  ?? 'g'),
-                row('Carbs',    nf2.format(totals['carbs']    ?? 0), units['carbs']    ?? 'g'),
-                row('Fat',      nf2.format(totals['fat']      ?? 0), units['fat']      ?? 'g'),
-                row('Fiber',    nf2.format(totals['fiber']    ?? 0), units['fiber']    ?? 'g'),
-                row('Sugar',    nf2.format(totals['sugar']    ?? 0), units['sugar']    ?? 'g'),
-                row('Sodium',   nf0.format(totals['sodium']   ?? 0), units['sodium']   ?? 'mg'),
+                      style: Theme.of(context).textTheme.bodySmall),              
+                metricRowVal('calories', 'Calories', nf0.format(totals['calories'] ?? 0), (units['calories'] as String?) ?? 'kcal'),
+                metricRowVal('protein',  'Protein',  nf2.format(totals['protein']  ?? 0), (units['protein']  as String?) ?? 'g'),
+                metricRowVal('carbs',    'Carbs',    nf2.format(totals['carbs']    ?? 0), (units['carbs']    as String?) ?? 'g'),
+                metricRowVal('fat',      'Fat',      nf2.format(totals['fat']      ?? 0), (units['fat']      as String?) ?? 'g'),
+                metricRowVal('fiber',    'Fiber',    nf2.format(totals['fiber']    ?? 0), (units['fiber']    as String?) ?? 'g'),
+                metricRowVal('sugar',    'Sugar',    nf2.format(totals['sugar']    ?? 0), (units['sugar']    as String?) ?? 'g'),
+                metricRowVal('sodium',   'Sodium',   nf0.format(totals['sodium']   ?? 0), (units['sodium']   as String?) ?? 'mg'),
               ],
             ),
           ),
@@ -537,7 +577,7 @@ class _TodaysMealsListState extends State<TodaysMealsList> {
   Widget build(BuildContext context) {
     final df = DateFormat('yyyy-MM-dd');
     final nf0 = NumberFormat('#,##0');
-    final nf2 = NumberFormat('#,##0.##');
+    // final nf2 = NumberFormat('#,##0.##');
 
     if (_noToken) {
       return Card(

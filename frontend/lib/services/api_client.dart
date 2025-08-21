@@ -20,7 +20,7 @@ class ApiException implements Exception {
 
 /// Thrown when the server returns 404 for a resource.
 class NotFoundException extends ApiException {
-  NotFoundException(String message) : super(message);
+  NotFoundException(super.message);
 }
 
 class ApiClient {

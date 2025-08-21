@@ -44,12 +44,16 @@ class _AddToMealScreenState extends State<AddToMealScreen> {
       firstDate: DateTime(2020),
       lastDate: DateTime(2100),
     );
+    if (!mounted) return;
     if (d == null) return;
     final t = await showTimePicker(
       context: context,
       initialTime: TimeOfDay.fromDateTime(_when),
     );
+    if (!mounted) return;
     if (t == null) return;
+
+    if (!mounted) return;
     setState(() {
       _when = DateTime(d.year, d.month, d.day, t.hour, t.minute);
     });
