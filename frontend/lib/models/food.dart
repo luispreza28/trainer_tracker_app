@@ -21,33 +21,33 @@ class NutrientsPer100g {
   });
 
   factory NutrientsPer100g.fromJson(Map<String, dynamic> j) {
-    double? _num(dynamic v) {
+    double? numVal(dynamic v) {
       if (v == null || (v is String && v.trim().isEmpty)) return null;
       if (v is num) return v.toDouble();
       return double.tryParse(v.toString());
     }
 
     // Accept both our backend keys and a few OFF-style fallbacks
-    double? _first(List<String> keys) {
+    double? firstVal(List<String> keys) {
       for (final k in keys) {
-        if (j.containsKey(k) && j[k] != null) return _num(j[k]);
+        if (j.containsKey(k) && j[k] != null) return numVal(j[k]);
       }
       return null;
     }
 
     return NutrientsPer100g(
-      calories: _first([
+      calories: firstVal([
         'calories',
         'kcal_100g',
         'energy-kcal_100g',
         'energy-kcal_serving',
       ]),
-      protein: _first(['protein', 'protein_100g', 'proteins_100g']),
-      carbs: _first(['carbs', 'carbs_100g', 'carbohydrates_100g']),
-      fat: _first(['fat', 'fat_100g']),
-      fiber: _first(['fiber', 'fiber_100g']),
-      sugar: _first(['sugar', 'sugars', 'sugars_100g', 'sugar_100g']),
-      sodium: _first(['sodium', 'sodium_100g', 'sodium_mg']),
+      protein: firstVal(['protein', 'protein_100g', 'proteins_100g']),
+      carbs: firstVal(['carbs', 'carbs_100g', 'carbohydrates_100g']),
+      fat: firstVal(['fat', 'fat_100g']),
+      fiber: firstVal(['fiber', 'fiber_100g']),
+      sugar: firstVal(['sugar', 'sugars', 'sugars_100g', 'sugar_100g']),
+      sodium: firstVal(['sodium', 'sodium_100g', 'sodium_mg']),
     );
   }
 
