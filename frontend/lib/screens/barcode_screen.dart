@@ -8,6 +8,7 @@ import 'add_to_meal_screen.dart';
 import 'token_settings_screen.dart';
 import 'goals_screen.dart';
 import '../services/goals_service.dart';
+import '../services/tz_service.dart';
 
 class BarcodeScreen extends StatefulWidget {
   static const routeName = '/barcode';
@@ -21,13 +22,14 @@ class _BarcodeScreenState extends State<BarcodeScreen> {
   final _codeCtrl = TextEditingController();
   final GlobalKey<_TodaysSummaryCardState> _summaryKey = GlobalKey<_TodaysSummaryCardState>(); // ⬅️ key to call refresh()
 
-  final String _tz = 'America/Los_Angeles';
+
+  String _tz = 'America/Los_Angeles';
   DateTime _selectedDate = (() {
     final now = DateTime.now();
     return DateTime(now.year, now.month, now.day);
   })();
 
-String _dateStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+  String _dateStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
 
   bool _loading = false;
   String? _error;
@@ -37,6 +39,64 @@ String _dateStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
   void dispose() {
     _codeCtrl.dispose();
     super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    _dateStr = DateFormat('yyyy-MM-dd').format(DateTime(now.year, now.month, now.day));
+    // Run after first frame so GlobalKey children are mounted
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadTz();
+    });
+  }
+
+  Future<void> _loadTz() async {
+    final saved = await TzService().getTz();
+    if (!mounted) return;
+    if (saved != null && saved.isNotEmpty && saved != _tz) {
+      setState(() => _tz = saved);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _summaryKey.currentState?.refresh(); // re-fetch summary for TZ
+      });
+    }
+  }
+
+  Future<void> _pickTz() async {
+    const options = <String>[
+      'America/Los_Angeles',
+      'America/Denver',
+      'America/Chicago',
+      'America/New_York',
+      'Europe/London',
+      'Europe/Berlin',
+      'Asia/Tokyo',
+      'Australia/Sydney',
+    ];
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Select timezone'),
+        children: [
+          for (final tz in options)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, tz),
+              child: Text(tz),
+            ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (selected != null && selected != _tz) {
+      await TzService().setTz(selected);
+      if (!mounted) return;
+      setState(() => _tz = selected);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Timezone set to $selected')),
+      );
+      _summaryKey.currentState?.refresh(); // refresh in new TZ
+    }
   }
 
   Future<void> _doImport() async {
@@ -162,6 +222,7 @@ String _dateStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
                         }
                       },
                     ),
+                    IconButton(onPressed: _pickTz, icon: const Icon(Icons.public), tooltip: 'Timezone ($_tz)'),
                     const SizedBox(width: 8),
                     TextButton(
                       onPressed: () {
@@ -307,6 +368,7 @@ class _TodaysSummaryCardState extends State<TodaysSummaryCard> {
   void initState() {
     super.initState();
     _prepare();
+    _BarcodeScreenState()._loadTz();
   }
 
   /// Public method so parent can trigger a refresh
@@ -454,7 +516,7 @@ class _TodaysSummaryCardState extends State<TodaysSummaryCard> {
                   children: [
                     Expanded(
                       child: Text(
-                        "Today's summary (${data['date']})",
+                        "Today's summary (${data['date']} • ${widget.tz})",
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                     ),
@@ -507,6 +569,18 @@ class _TodaysMealsListState extends State<TodaysMealsList> {
   void initState() {
     super.initState();
     _prepare();
+    _BarcodeScreenState()._loadTz();
+  }
+
+  @override
+  void didUpdateWidget(covariant TodaysMealsList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // If parent changes date or tz, refresh this list.
+    if (oldWidget.date != widget.date || oldWidget.tz != widget.tz) {
+      setState(() {
+        _future = ApiClient().getMealsForDate(DateFormat('yyyy-MM-dd').parse(widget.date), tz: widget.tz);
+      });
+    }
   }
 
   Future<void> _prepare() async {
@@ -582,7 +656,7 @@ class _TodaysMealsListState extends State<TodaysMealsList> {
     if (_noToken) {
       return Card(
         child: ListTile(
-          title: const Text("Today's meals"),
+          title: Text("Today's meals (${widget.date} • ${widget.tz})"),
           subtitle: const Text('API token not set. Open Token settings to add your DRF token.'),
           trailing: TextButton(
             onPressed: () {
@@ -629,7 +703,7 @@ class _TodaysMealsListState extends State<TodaysMealsList> {
                 Row(
                   children: [
                     Expanded(
-                      child: Text("Today's meals (${df.format(DateFormat('yyyy-MM-dd').parse(widget.date))})",
+                      child: Text("Today's meals (${df.format(DateFormat('yyyy-MM-dd').parse(widget.date))} • ${widget.tz})",
                           style: Theme.of(context).textTheme.titleMedium),
                     ),
                     IconButton(icon: const Icon(Icons.refresh), tooltip: 'Refresh', onPressed: _load),
