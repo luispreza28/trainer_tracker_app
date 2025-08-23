@@ -9,6 +9,8 @@ import 'token_settings_screen.dart';
 import 'goals_screen.dart';
 import '../services/goals_service.dart';
 import '../services/tz_service.dart';
+import '../services/file_saver.dart';
+import '../services/export_service.dart';
 
 class BarcodeScreen extends StatefulWidget {
   static const routeName = '/barcode';
@@ -40,6 +42,90 @@ class _BarcodeScreenState extends State<BarcodeScreen> {
     _codeCtrl.dispose();
     super.dispose();
   }
+
+  // Export (CSV/JSON)
+  void _openExportSheet() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.grid_on),
+              title: const Text('Export CSV'),
+              onTap: () => Navigator.pop(ctx, 'csv'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.code),
+              title: const Text('Export JSON'),
+              onTap: () => Navigator.pop(ctx, 'json'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || choice == null) return;
+    if (choice == 'csv') {
+      await _exportDayCsv();
+    } else if (choice == 'json') {
+      await _exportDayJson();
+    }
+  }
+
+  Future<void> _exportDayCsv() async {
+    try {
+      final client = ApiClient();
+      final summary = await client.getSummary(date: _dateStr, tz: _tz);
+      final meals = await client.getMealsForDate(_dateStr, tz: _tz);
+      final csv = ExportService.csvForDay(
+        date: _dateStr,
+        tz: _tz,
+        summary: summary,
+        meals: meals,
+      );
+      final filename = _safeFilename('trainer_${_dateStr}_$_tz.csv');
+      await saveTextFile(filename, csv, mimeType: 'text/csv');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Exported $filename')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Export failed: $e')),
+      );
+    }
+  }
+
+  Future<void> _exportDayJson() async {
+    try {
+      final client = ApiClient();
+      final summary = await client.getSummary(date: _dateStr, tz: _tz);
+      final meals = await client.getMealsForDate(_dateStr, tz: _tz);
+      final json = ExportService.jsonForDay(
+        date: _dateStr,
+        tz: _tz,
+        summary: summary,
+        meals: meals,
+      );
+      final filename = _safeFilename('trainer_${_dateStr}_$_tz.json');
+      await saveTextFile(filename, json, mimeType: 'application/json');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Exported $filename')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Export failed: $e')),
+      );
+    }
+  }
+
+  String _safeFilename(String s) =>
+      s.replaceAll('/', '-').replaceAll(RegExp(r'\s'), '_');
+  
 
   @override
   void initState() {
@@ -223,6 +309,7 @@ class _BarcodeScreenState extends State<BarcodeScreen> {
                       },
                     ),
                     IconButton(onPressed: _pickTz, icon: const Icon(Icons.public), tooltip: 'Timezone ($_tz)'),
+                    IconButton(onPressed: _openExportSheet, icon: const Icon(Icons.file_download), tooltip: 'Export day (CSV/JSON)'),
                     const SizedBox(width: 8),
                     TextButton(
                       onPressed: () {
@@ -391,8 +478,8 @@ class _TodaysSummaryCardState extends State<TodaysSummaryCard> {
         _goals = goals;
         final date = widget.date;
         _future = ApiClient().getDailySummary(
-          DateFormat('yyyy-MM-dd').parse(date),
-          tz: widget.tz,
+          date,
+          widget.tz,
         );
       });
     }
@@ -402,8 +489,8 @@ class _TodaysSummaryCardState extends State<TodaysSummaryCard> {
     setState(() {
       final date = widget.date;
       _future = ApiClient().getDailySummary(
-        DateFormat('yyyy-MM-dd').parse(date),
-        tz: widget.tz,
+        date,
+        widget.tz,
       );
     });
   }
@@ -413,7 +500,7 @@ class _TodaysSummaryCardState extends State<TodaysSummaryCard> {
     if (!mounted) return;
     setState(() {
       _goals = goals;
-      _future = ApiClient().getDailySummary(DateFormat('yyyy-MM-dd').parse(widget.date), tz: widget.tz);
+      _future = ApiClient().getDailySummary(widget.date, widget.tz);
     });
   }
 
@@ -578,7 +665,7 @@ class _TodaysMealsListState extends State<TodaysMealsList> {
     // If parent changes date or tz, refresh this list.
     if (oldWidget.date != widget.date || oldWidget.tz != widget.tz) {
       setState(() {
-        _future = ApiClient().getMealsForDate(DateFormat('yyyy-MM-dd').parse(widget.date), tz: widget.tz);
+        _future = ApiClient().getMealsForDate(widget.date, tz: widget.tz);
       });
     }
   }
@@ -595,7 +682,7 @@ class _TodaysMealsListState extends State<TodaysMealsList> {
       setState(() {
         _noToken = false;
         _future = ApiClient().getMealsForDate(
-          DateFormat('yyyy-MM-dd').parse(widget.date),
+          widget.date,
           tz: widget.tz,
         );
       });
@@ -605,7 +692,7 @@ class _TodaysMealsListState extends State<TodaysMealsList> {
   void _load() {
     setState(() {
       _future = ApiClient().getMealsForDate(
-        DateFormat('yyyy-MM-dd').parse(widget.date),
+        widget.date,
         tz: widget.tz,
       );
     });
