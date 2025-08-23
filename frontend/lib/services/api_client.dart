@@ -8,7 +8,6 @@ import 'package:http/http.dart' as http;
 
 import '../models/food.dart';
 import 'auth_service.dart';
-import 'package:intl/intl.dart';
 
 /// Base API exception used by the client.
 class ApiException implements Exception {
@@ -119,29 +118,46 @@ class ApiClient {
     }
   }
 
-  Future<Map<String, dynamic>> getDailySummary(DateTime date, {String? tz}) async {
-    // Ensure intl is imported for DateFormat
-    // Ensure dart:convert and package:http/http.dart are imported
-    final d = DateFormat('yyyy-MM-dd').format(date);
-    final q = tz == null ? 'date=$d' : 'date=$d&tz=${Uri.encodeQueryComponent(tz)}';
-    final uri = Uri.parse('$baseUrl/meals/summary/?$q');
-    final headers = await _headers();
-    final r = await http.get(uri, headers: headers).timeout(const Duration(seconds: 10));
-    if (r.statusCode != 200) {
-      throw ApiException('HTTP ${r.statusCode}: ${r.body}');
+  Future<Map<String, dynamic>> getDailySummary(String date, String tz) async {
+    final token = await AuthService.getToken();
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      if (token != null && token.isNotEmpty) 'Authorization': 'Token $token',
+    };
+    final uri = Uri.parse('$baseUrl/meals/summary/').replace(queryParameters: {'date': date, 'tz': tz});
+    final res = await http.get(uri, headers: headers);
+    if (res.statusCode == 200) {
+      return json.decode(res.body) as Map<String, dynamic>;
     }
-    return json.decode(r.body) as Map<String, dynamic>;
+    if (res.statusCode == 404) {
+      throw NotFoundException('Summary not found for $date ($tz)');
+    }
+    throw ApiException('Failed to fetch summary (${res.statusCode}): ${res.body}');
   }
 
-  Future<List<Map<String, dynamic>>> getMealsForDate(DateTime date, {String? tz}) async {
-    final d = DateFormat('yyyy-MM-dd').format(date);
-    final q = tz == null ? 'date=$d' : 'date=$d&tz=${Uri.encodeQueryComponent(tz)}';
-    final uri = Uri.parse('$baseUrl/meals/?$q');
-    final r = await http.get(uri, headers: await _headers()).timeout(const Duration(seconds: 10));
-    if (r.statusCode != 200) throw ApiException('HTTP ${r.statusCode}: ${r.body}');
-    final m = json.decode(r.body) as Map<String, dynamic>;
-    final results = (m['results'] as List).cast<Map<String, dynamic>>();
-    return results;
+  Future<List<Map<String, dynamic>>> getMealsForDate(String date, {required String tz}) async {
+    final token = await AuthService.getToken();
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      if (token != null && token.isNotEmpty) 'Authorization': 'Token $token',
+    };
+    final uri = Uri.parse('$baseUrl/meals/').replace(queryParameters: {'date': date, 'tz': tz});
+       final res = await http.get(uri, headers: headers);
+    if (res.statusCode == 200) {
+      final decoded = json.decode(res.body);
+      List items;
+      if (decoded is List) {
+        items = decoded;
+      } else if (decoded is Map<String, dynamic> && decoded['results'] is List) {
+        items = decoded['results'] as List;
+      } else if (decoded is Map) {
+        throw ApiException('Unexpected meals response: $decoded');
+      } else {
+        throw ApiException('Unexpected meals response type: ${decoded.runtimeType}');
+      }
+      return items.map((e) => (e as Map).cast<String, dynamic>()).toList();
+    }
+    throw ApiException('Failed to fetch meals (${res.statusCode}): ${res.body}');
   }
 
   Future<void> deleteMeal(int id) async {
@@ -155,6 +171,13 @@ class ApiClient {
     final body = json.encode({'quantity': grams});
     final r = await http.patch(uri, headers: await _headers(), body: body).timeout(const Duration(seconds: 10));
     if (r.statusCode != 200) throw ApiException('HTTP ${r.statusCode}: ${r.body}');
+  }
+
+  Future<Map<String, dynamic>> getSummary({
+    required String date,
+    required String tz,
+  }) {
+    return getDailySummary(date, tz);
   }
   
 }
