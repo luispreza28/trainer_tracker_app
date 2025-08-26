@@ -1,16 +1,69 @@
-﻿# Python / Django
+﻿# -------------------------
+# OS junk / editors
+# -------------------------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# -------------------------
+# Python / Django
+# -------------------------
 __pycache__/
 *.py[cod]
-
-# Virtual env
-venv/
-
-# Env & secrets
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+# env & secrets
 .env
 *.env
 .env.*
 .env.local
+# local DBs (don’t commit dev DB)
+*.sqlite3
 
-# Tooling artifacts
-replacements.txt
-*.egg-info/
+# -------------------------
+# Virtual env
+# -------------------------
+venv/
+
+# -------------------------
+# Flutter / Dart
+# -------------------------
+frontend/.dart_tool/
+frontend/build/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+
+# iOS (Flutter)
+frontend/ios/Flutter/.last_build_id
+# (Keep Podfile.lock committed for iOS determinism; so don't ignore it)
+
+# -------------------------
+# Android (Flutter)
+# -------------------------
+frontend/android/.gradle/
+frontend/android/.cxx/
+frontend/android/captures/
+# Local machine-specific file (never commit)
+frontend/android/local.properties
+# DO commit the Gradle wrapper & scripts:
+#   frontend/android/gradle/wrapper/gradle-wrapper.jar
+#   frontend/android/gradle/wrapper/gradle-wrapper.properties
+#   frontend/android/gradlew
+#   frontend/android/gradlew.bat
+
+# Signing / secrets
+**/key.properties
+**/*.keystore
+**/*.jks
+# If you add Firebase later, don’t commit this:
+**/google-services.json
+
+# -------------------------
+# Tools / binaries
+# -------------------------
+cloudflared.exe
