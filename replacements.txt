@@ -1,0 +1,4 @@
+﻿regex:SECRET_KEY\s*=\s*['\"][^'"]+['\"]==>SECRET_KEY="***REDACTED***"
+regex:DJANGO_SECRET_KEY\s*=\s*['\"][^'"]+['\"]==>DJANGO_SECRET_KEY="***REDACTED***"
+regex:FDC_API_KEY\s*=\s*['\"][^'"]+['\"]==>FDC_API_KEY="***REDACTED***"
+regex:POSTGRES_PASSWORD\s*=\s*['\"][^'"]+['\"]==>POSTGRES_PASSWORD="***REDACTED***"
