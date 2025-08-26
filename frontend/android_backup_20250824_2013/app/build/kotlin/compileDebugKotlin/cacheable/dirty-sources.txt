@@ -1,0 +1,1 @@
+C:\Users\luis\Documents\trainer_tracker_app\frontend\android\app\src\main\kotlin\com\example\frontend\MainActivity.kt

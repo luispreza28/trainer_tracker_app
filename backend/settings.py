@@ -29,8 +29,19 @@ SECRET_KEY = 'django-insecure-^-*4fv1swe(5gh*eh=gs%!6pm@f(ao1mdcugfw6(5_x04xa*0o
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    "*",           # dev convenience; you can drop this later
+    "localhost",
+    "127.0.0.1",
+    "10.0.2.2",
+    ".trycloudflare.com",   # <-- leading dot = any subdomain
+]
 
+
+# Only needed if you use cookie/CSRF auth:
+CSRF_TRUSTED_ORIGINS = [
+    "https://*.trycloudflare.com",
+]
 
 # Application definition
 
@@ -57,10 +68,16 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
 CORS_ALLOWED_ORIGINS = [
-    'http://localhost:3000',
+    "http://localhost:3000",
     "http://localhost:8080",
+    "https://*.trycloudflare.com",
 ]
+
+USE_X_FORWARDED_HOST = True
+
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 CORS_ALLOW_ALL_ORIGINS = True  # dev only
 

@@ -2,12 +2,12 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart'
-    show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:http/http.dart' as http;
 
 import '../models/food.dart';
 import 'auth_service.dart';
+import '../core/api_base.dart';
+
 
 /// Base API exception used by the client.
 class ApiException implements Exception {
@@ -27,18 +27,29 @@ class ApiClient {
   /// or `http://10.0.2.2:8000/api` (Android emulator).
   final String baseUrl;
 
-  ApiClient({String? baseUrl}) : baseUrl = baseUrl ?? detectBaseUrl();
+  ApiClient({String? overrideBaseUrl})
+      : baseUrl = overrideBaseUrl ?? detectBaseUrl() {
+    print('ApiClient: base = ${baseUrl}');
+  }
+
+  static String _withApi(String base) {
+    final b = base.endsWith('/') ? base.substring(0, base.length - 1) : base;
+    return b.endsWith('/api') ? b : '$b/api';
+  }
+
+  Uri _u(String path, [Map<String, dynamic>? qs]) {
+    final p = path.startsWith('/') ? path : '/$path';
+    final uri = Uri.parse('$baseUrl$p');
+    return qs == null
+        ? uri
+        : uri.replace(queryParameters: qs.map((k, v) => MapEntry(k, v.toString())));
+  }
 
   /// Pick a sensible default without importing `dart:io`
   /// so the code remains web-compatible.
   static String detectBaseUrl() {
-    if (kIsWeb) return 'http://127.0.0.1:8000/api';
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      // Android emulator loopback:
-      return 'http://10.0.2.2:8000/api';
-    }
-    // iOS sim, desktop, or real device (works with `adb reverse`)
-    return 'http://127.0.0.1:8000/api';
+    final base = apiBase.endsWith('/') ? apiBase.substring(0, apiBase.length - 1) : apiBase;
+    return '$base/api';
   }
 
   /// Build common headers, including token if present.
@@ -59,7 +70,7 @@ class ApiClient {
   /// 404 => product not found
   /// other => throws ApiException with status/body
   Future<Food> importByBarcode(String code) async {
-    final uri = Uri.parse('$baseUrl/foods/import/barcode/$code/');
+    final uri = _u('/foods/import/barcode/$code/');
     final headers = await _headers();
 
     http.Response resp;
@@ -92,7 +103,7 @@ class ApiClient {
     DateTime? mealTime,
     String? notes,
   }) async {
-    final uri = Uri.parse('$baseUrl/meals/');
+    final uri = _u('/meals/');
     final headers = await _headers();
     final body = <String, dynamic>{
       'food': foodId,
@@ -124,7 +135,7 @@ class ApiClient {
       'Content-Type': 'application/json',
       if (token != null && token.isNotEmpty) 'Authorization': 'Token $token',
     };
-    final uri = Uri.parse('$baseUrl/meals/summary/').replace(queryParameters: {'date': date, 'tz': tz});
+    final uri = _u('/meals/summary/').replace(queryParameters: {'date': date, 'tz': tz});
     final res = await http.get(uri, headers: headers);
     if (res.statusCode == 200) {
       return json.decode(res.body) as Map<String, dynamic>;
@@ -141,7 +152,7 @@ class ApiClient {
       'Content-Type': 'application/json',
       if (token != null && token.isNotEmpty) 'Authorization': 'Token $token',
     };
-    final uri = Uri.parse('$baseUrl/meals/').replace(queryParameters: {'date': date, 'tz': tz});
+    final uri = _u('/meals/').replace(queryParameters: {'date': date, 'tz': tz});
        final res = await http.get(uri, headers: headers);
     if (res.statusCode == 200) {
       final decoded = json.decode(res.body);
@@ -161,13 +172,13 @@ class ApiClient {
   }
 
   Future<void> deleteMeal(int id) async {
-    final uri = Uri.parse('$baseUrl/meals/$id/');
+    final uri = _u('/meals/$id/');
     final r = await http.delete(uri, headers: await _headers()).timeout(const Duration(seconds: 10));
     if (r.statusCode != 204) throw ApiException('HTTP ${r.statusCode}: ${r.body}');
   }
 
   Future<void> updateMealQuantity(int id, double grams) async {
-    final uri = Uri.parse('$baseUrl/meals/$id/');
+    final uri = _u('/meals/$id/');
     final body = json.encode({'quantity': grams});
     final r = await http.patch(uri, headers: await _headers(), body: body).timeout(const Duration(seconds: 10));
     if (r.statusCode != 200) throw ApiException('HTTP ${r.statusCode}: ${r.body}');

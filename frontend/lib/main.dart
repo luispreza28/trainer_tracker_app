@@ -4,6 +4,9 @@ import 'screens/add_to_meal_screen.dart';
 import 'screens/token_settings_screen.dart';
 
 void main() {
+  const env = String.fromEnvironment('API_BASE_URL');
+  // ignore: avoid_print
+  print('MAIN API_BASE_URL="$env"');
   runApp(const MyApp());
 }
 
