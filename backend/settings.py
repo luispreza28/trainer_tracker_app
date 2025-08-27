@@ -46,11 +46,16 @@ if not SECRET_KEY:
 DEBUG = env_bool("DEBUG", "True")
 
 ALLOWED_HOSTS = [
+
     '*',                       # dev-only convenience
     'localhost', '127.0.0.1', '10.0.2.2',
     '.trycloudflare.com',      # any CF quick tunnel
 ]
 
+# Only needed if you use cookie/CSRF auth:
+CSRF_TRUSTED_ORIGINS = [
+    "https://*.trycloudflare.com",
+]
 
 # Only needed if you use cookie/CSRF auth:
 CSRF_TRUSTED_ORIGINS = env_list(
