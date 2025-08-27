@@ -12,36 +12,51 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 import os
 from pathlib import Path
-from dotenv import load_dotenv; load_dotenv()
-FDC_API_KEY = os.getenv("unDHP2YrNzZ2G6krqWnKrGjluVC6eVeOGgEPxOx4")
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-only")
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+if load_dotenv:
+    load_dotenv(BASE_DIR / '.env')
+
+def env_bool(name: str, default: str = "False") -> bool:
+    return os.getenv(name, default).lower() in ("1", "true", "yes", "on")
+
+def env_list(name: str, default: str = "") -> list[str]:
+    return [x.strip() for x in os.getenv(name, default).split(",") if x.strip()]
+
+FDC_API_KEY = os.getenv("FDC_API_KEY")
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
+if not SECRET_KEY:
+    # In dev you can fallback so you don’t crash locally.
+    from django.core.management.utils import get_random_secret_key
+    SECRET_KEY = os.getenv("DJANGO_SECRET_FALLBACK", get_random_secret_key())
+
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-^-*4fv1swe(5gh*eh=gs%!6pm@f(ao1mdcugfw6(5_x04xa*0o'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env_bool("DEBUG", "True")
 
 ALLOWED_HOSTS = [
-    "*",           # dev convenience; you can drop this later
-    "localhost",
-    "127.0.0.1",
-    "10.0.2.2",
-    ".trycloudflare.com",   # <-- leading dot = any subdomain
+    '*',                       # dev-only convenience
+    'localhost', '127.0.0.1', '10.0.2.2',
+    '.trycloudflare.com',      # any CF quick tunnel
 ]
 
 
 # Only needed if you use cookie/CSRF auth:
-CSRF_TRUSTED_ORIGINS = [
+CSRF_TRUSTED_ORIGINS = env_list(
+    "CSRF_TRUSTED_ORIGINS",
     "https://*.trycloudflare.com",
-]
+)
 
 # Application definition
 
@@ -75,9 +90,11 @@ CORS_ALLOWED_ORIGINS = [
     "https://*.trycloudflare.com",
 ]
 
-USE_X_FORWARDED_HOST = True
+USE_X_FORWARDED_HOST = env_bool("USE_X_FORWARDED_HOST", "True")
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+CORS_ALLOW_CREDENTIALS = env_bool("CORS_ALLOW_CREDENTIALS", "False")
 
 CORS_ALLOW_ALL_ORIGINS = True  # dev only
 
