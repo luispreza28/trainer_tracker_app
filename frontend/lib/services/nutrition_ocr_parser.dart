@@ -151,41 +151,119 @@ class NutritionOcrParser {
     );
   }
 
-  /// Parse “Serving size 2 Tbsp (16g)”, “Serving size 1/2 cup”, etc.
+  /// Parse “Serving size 2 Tbsp (16 g)”, “Serving size 1/2 cup”, etc.
   /// Returns (value, unit) where unit is normalized: g, ml, cup, tbsp, tsp, oz.
   static (double?, String?) _parseServingSize(List<String> lines) {
     final ssLineIdx = lines.indexWhere(
-      (l) => l.contains(RegExp(r'\bserving\s*size\b', caseSensitive: false)),
+      (l) => l.contains(RegExp(r'\bserv(?:ing)?\s*size\b', caseSensitive: false)),
     );
-    if (ssLineIdx == -1) return (null, null);
 
-    final candidates = <String>[lines[ssLineIdx]];
-    if (ssLineIdx + 1 < lines.length) candidates.add(lines[ssLineIdx + 1]);
-    final joined = candidates.join(' ');
-
-    // Prefer explicit grams/ml in parens: “… (16g)” or “… (240 ml)”
-    final paren = RegExp(
-      r'\((\d+(?:[.,]\d+)?)\s*(g|gram|grams|ml|milliliter|milliliters)\b',
-      caseSensitive: false,
-    ).firstMatch(joined);
-    if (paren != null) {
-      final v = _toDouble(paren.group(1)!);
-      final u = _normUnit(paren.group(2)!);
-      return (v, u);
+    bool _looksLikeNutrientRow(String line) {
+      // Any known alias EXCEPT “serving size” means: likely a nutrient row.
+      if (RegExp(r'\bserv(?:ing)?\s*size\b', caseSensitive: false).hasMatch(line)) {
+        return false;
+      }
+      return _containsAnyAlias(line);
     }
 
-    // Otherwise: “serving size 2 Tbsp”, “1/2 cup”, etc.
-    final m = RegExp(
-      r'serving\s*size[:\s-]*([0-9]+(?:[./][0-9]+)?)\s*([a-zA-Z]+)',
-      caseSensitive: false,
-    ).firstMatch(joined);
-    if (m != null) {
-      final v = _toDouble(m.group(1)!);
-      final rawUnit = m.group(2)!;
-      return (v, _normUnit(rawUnit));
+    (double?, String?)? _fromLineParen(String line) {
+      // Prefer explicit grams/ml in parentheses: “… (16 g)” or “… (240 ml)”
+      final paren = RegExp(
+        r'\((\d+(?:[.,]\d+)?)\s*(g|gram|grams|ml|milliliter|milliliters)\b',
+        caseSensitive: false,
+      ).firstMatch(line);
+      if (paren != null) {
+        final v = _toDouble(paren.group(1)!);
+        final u = _normUnit(paren.group(2)!);
+        return (v, u);
+      }
+      return null;
     }
+
+    (double?, String?)? _fromLineVol(String line) {
+      // Volumetric forms: “2 Tbsp”, “1/2 cup”, “1 oz”, etc.
+      final m = RegExp(
+        r'(?<![a-z])([0-9]+(?:[./][0-9]+)?)\s*'
+        r'(tbsp|tablespoon|tablespoons|tsp|teaspoon|teaspoons|cup|cups|oz|ounce|ounces)\b',
+        caseSensitive: false,
+      ).firstMatch(line);
+      if (m != null) {
+        final v = _toDouble(m.group(1)!);
+        final u = _normUnit(m.group(2)!);
+        return (v, u);
+      }
+      return null;
+    }
+
+    (double?, String?)? _fromLineGramMl(String line) {
+      // Only accept g/ml here if the line *mentions serving* to avoid “fat 2 g”.
+      if (!RegExp(r'\bserv', caseSensitive: false).hasMatch(line)) return null;
+      final m = RegExp(
+        r'(?<![a-z])([0-9]+(?:[./][0-9]+)?)\s*(g|gram|grams|ml|milliliter|milliliters)\b',
+        caseSensitive: false,
+      ).firstMatch(line);
+      if (m != null) {
+        final v = _toDouble(m.group(1)!);
+        final u = _normUnit(m.group(2)!);
+        return (v, u);
+      }
+      return null;
+    }
+
+    // Rank candidates: 1 = paren g/ml, 2 = volumetric, 3 = g/ml with “serv”.
+    ({int rank, int dist, (double?, String?) val})? _scoreLine(int idx) {
+      final line = lines[idx];
+      if (_looksLikeNutrientRow(line)) return null;
+
+      final p = _fromLineParen(line);
+      if (p != null) return (rank: 1, dist: (ssLineIdx - idx).abs(), val: p);
+
+      final v = _fromLineVol(line);
+      if (v != null) return (rank: 2, dist: (ssLineIdx - idx).abs(), val: v);
+
+      final g = _fromLineGramMl(line);
+      if (g != null) return (rank: 3, dist: (ssLineIdx - idx).abs(), val: g);
+
+      return null;
+    }
+
+    // A) Prefer a window after “serving size”
+    if (ssLineIdx != -1) {
+      final end = (ssLineIdx + 25).clamp(0, lines.length - 1);
+      final candidates = <({int rank, int dist, (double?, String?) val})>[];
+      for (int j = ssLineIdx + 1; j <= end; j++) {
+        final scored = _scoreLine(j);
+        if (scored != null) candidates.add(scored);
+      }
+      if (candidates.isNotEmpty) {
+        candidates.sort((a, b) {
+          final r = a.rank.compareTo(b.rank);
+          return r != 0 ? r : a.dist.compareTo(b.dist);
+        });
+        return candidates.first.val;
+      }
+    }
+
+    // B) Fallback: scan entire doc with same scoring; prefer closest to ssLineIdx if known
+    final all = <({int rank, int dist, (double?, String?) val})>[];
+    for (int j = 0; j < lines.length; j++) {
+      final scored = _scoreLine(j);
+      if (scored != null) all.add(scored);
+    }
+    if (all.isNotEmpty) {
+      all.sort((a, b) {
+        final r = a.rank.compareTo(b.rank);
+        if (r != 0) return r;
+        // If we found the “serving size” header, prefer candidates closer to it
+        if (ssLineIdx != -1) return a.dist.compareTo(b.dist);
+        return 0;
+      });
+      return all.first.val;
+    }
+
     return (null, null);
   }
+
 
   static String _normUnit(String u) {
     final t = u.toLowerCase();
@@ -302,72 +380,58 @@ class NutritionOcrParser {
   }
 
 
-    /// Calories line: grab the integer nearest *after* the word "calories".
+  // Calories: grab the big standalone integer that appears after "calories".
+  // We DO NOT stop at "% Daily Value" because some labels OCR that block
+  // before the headline number. Only accept digits-only lines in [5..1200].
+  static double? _extractCalories(List<String> lines) {
+    final reCal = RegExp(r'\bcalories\b', caseSensitive: false);
 
-   /// Calories line: pick the best integer *after* the word "calories".
-/// Scans a window until we hit a section fence (e.g. "% Daily Value").
-/// Uses scoring so the big standalone number wins over DV/units rows.
-/// Robustly extract kcal near the "Calories" label.
-/// Strategy:
-///  - After the first line that contains "calories", scan forward.
-///  - If we see a **digits-only** line (20..1200) within ~30 lines,
-///    return it immediately. This matches the big headline number.
-///  - Otherwise, collect candidates and pick the best by a small score.
-///  - Only fence by "% Daily Value" so we don't miss a late headline.
-static double? _extractCalories(List<String> lines) {
-  final reCal   = RegExp(r'\bcalories\b', caseSensitive: false);
-  final reDV    = RegExp(r'%\s*daily\s*value', caseSensitive: false);
+    String _stripWeird(String s) => s
+        .replaceAll('\u200E', '')
+        .replaceAll('\u200F', '')
+        .replaceAll('\u200B', '')
+        .replaceAll('\u200C', '')
+        .replaceAll('\u200D', '')
+        .replaceAll('\u00A0', ' ')
+        .replaceAll('\u00AD', '')
+        .replaceAll(RegExp(r'[\u202A-\u202E]'), '')
+        .replaceAll('|', ' ')
+        .trim();
 
-  // strip common invisibles / bidi / NBSP / soft hyphen etc.
-  String _stripWeird(String s) => s
-      .replaceAll('\u200E', '')
-      .replaceAll('\u200F', '')
-      .replaceAll('\u200B', '')
-      .replaceAll('\u200C', '')
-      .replaceAll('\u200D', '')
-      .replaceAll('\u00A0', ' ')
-      .replaceAll('\u00AD', '')
-      .replaceAll(RegExp(r'[\u202A-\u202E]'), '')
-      .replaceAll('|', ' ')
-      .trim();
+    // Accept a naked integer line; tolerate a single trailing bracket/dot.
+    bool _isHeadlineNumber(String s) {
+      final t0 = _stripWeird(s);
+      final t = t0.replaceAllMapped(RegExp(r'(?<=\b)(\d)[oO](?=\b)'), (m) => '${m[1]}0');
 
-  // detect a pure integer line (no letters, no units, one number)
-  bool _isHeadlineNumber(String s) {
-    final c = _stripWeird(s);
-    // common OCR “6o” => “60”
-    final fix = c.replaceAllMapped(RegExp(r'(?<=\b)(\d)[oO](?=\b)'), (m) => '${m[1]}0');
-    // if any letters exist, bail (we only want a naked number line)
-    if (RegExp(r'[a-z]', caseSensitive: false).hasMatch(fix)) return false;
-    // must not contain obvious units or percent
-    if (RegExp(r'(?:%|\bg\b|\bmg\b|\bkcal\b|\bcal\b)', caseSensitive: false).hasMatch(fix)) {
-      return false;
-    }
-    // must be exactly one integer token and line must be that token
-    final m = RegExp(r'^\s*(\d{1,4})\s*$').firstMatch(fix);
-    if (m == null) return false;
-    final v = int.tryParse(m.group(1)!);
-    return v != null && v >= 20 && v <= 1200;
-  }
-
-  for (var i = 0; i < lines.length; i++) {
-    if (!reCal.hasMatch(lines[i])) continue;
-
-    // look ahead until "% Daily Value"
-    for (int j = i + 1; j < lines.length && j <= i + 80; j++) {
-      final s = lines[j];
-      if (reDV.hasMatch(s)) break;
-      if (_isHeadlineNumber(s)) {
-        final v = int.parse(RegExp(r'(\d{1,4})').firstMatch(_stripWeird(s))!.group(1)!);
-        debugPrint('Calories candidate (headline) => $v from line: "$s"');        
-        return v.toDouble(); // <- should return 60 for your label
+      // reject lines that contain letters or obvious units/percents
+      if (RegExp(r'[a-z]', caseSensitive: false).hasMatch(t)) return false;
+      if (RegExp(r'(?:%|\bg\b|\bmg\b|\bkcal\b|\bcal\b)', caseSensitive: false).hasMatch(t)) {
+        return false;
       }
+
+      // allow optional right bracket or dot after the integer
+      final m = RegExp(r'^\s*(\d{1,4})\s*[\)\]\.]?\s*$').firstMatch(t);
+      if (m == null) return false;
+
+      final v = int.tryParse(m.group(1)!);
+      return v != null && v >= 5 && v <= 1200; // <— lowered min from 20 → 5
     }
 
-    // If we didn’t find a pure headline, don’t guess.
+    for (var i = 0; i < lines.length; i++) {
+      if (!reCal.hasMatch(lines[i])) continue;
+
+      // scan forward generously; don't fence at "% Daily Value"
+      for (int j = i + 1; j < lines.length && j <= i + 80; j++) {
+        final s = lines[j];
+        if (_isHeadlineNumber(s)) {
+          final v = int.parse(RegExp(r'(\d{1,4})').firstMatch(_stripWeird(s))!.group(1)!);
+          return v.toDouble();
+        }
+      }
+      return null; // fall back to macro math upstream if needed
+    }
     return null;
   }
-  return null;
-}
 
 
 
