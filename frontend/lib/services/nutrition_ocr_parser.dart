@@ -1,5 +1,3 @@
-import 'package:flutter/foundation.dart';
-
 class NutritionParseResult {
   final double? servingSizeValue;
   final String? servingSizeUnit; // normalized: g, ml, cup, tbsp, tsp, oz
@@ -84,7 +82,7 @@ class NutritionOcrParser {
         .where((l) => l.isNotEmpty)
         .toList();
 
-    for (final l in lines) debugPrint('LINES >>> $l');
+    for (final l in lines) print('LINES >>> $l');
     // ---- Serving size -------------------------------------------------------
     final ss = _parseServingSize(lines);
 
@@ -151,118 +149,63 @@ class NutritionOcrParser {
     );
   }
 
-  /// Parse “Serving size 2 Tbsp (16 g)”, “Serving size 1/2 cup”, etc.
-  /// Returns (value, unit) where unit is normalized: g, ml, cup, tbsp, tsp, oz.
-  static (double?, String?) _parseServingSize(List<String> lines) {
-    final ssLineIdx = lines.indexWhere(
-      (l) => l.contains(RegExp(r'\bserv(?:ing)?\s*size\b', caseSensitive: false)),
-    );
+/// Parse “Serving size 2 Tbsp (16g)”, “Serving size 1 tsp (3g)”, etc.
+/// Returns (value, unit) where unit is normalized: g, ml, cup, tbsp, tsp, oz.
+/// Strategy:
+///   1) Find the line that says “serving size”
+///   2) Scan forward up to ~80 lines or until we hit “% daily value”
+///   3) Prefer explicit volume units next to a number (tbsp/tsp/cup/oz)
+///   4) Otherwise, accept grams/ml in parentheses “(16 g)”
+static (double?, String?) _parseServingSize(List<String> lines) {
+  final reSS = RegExp(r'\bserving\s*size\b', caseSensitive: false);
+  final reDV = RegExp(r'%\s*daily\s*value', caseSensitive: false);
 
-    bool _looksLikeNutrientRow(String line) {
-      // Any known alias EXCEPT “serving size” means: likely a nutrient row.
-      if (RegExp(r'\bserv(?:ing)?\s*size\b', caseSensitive: false).hasMatch(line)) {
-        return false;
-      }
-      return _containsAnyAlias(line);
-    }
-
-    (double?, String?)? _fromLineParen(String line) {
-      // Prefer explicit grams/ml in parentheses: “… (16 g)” or “… (240 ml)”
-      final paren = RegExp(
-        r'\((\d+(?:[.,]\d+)?)\s*(g|gram|grams|ml|milliliter|milliliters)\b',
-        caseSensitive: false,
-      ).firstMatch(line);
-      if (paren != null) {
-        final v = _toDouble(paren.group(1)!);
-        final u = _normUnit(paren.group(2)!);
-        return (v, u);
-      }
-      return null;
-    }
-
-    (double?, String?)? _fromLineVol(String line) {
-      // Volumetric forms: “2 Tbsp”, “1/2 cup”, “1 oz”, etc.
-      final m = RegExp(
-        r'(?<![a-z])([0-9]+(?:[./][0-9]+)?)\s*'
-        r'(tbsp|tablespoon|tablespoons|tsp|teaspoon|teaspoons|cup|cups|oz|ounce|ounces)\b',
-        caseSensitive: false,
-      ).firstMatch(line);
-      if (m != null) {
-        final v = _toDouble(m.group(1)!);
-        final u = _normUnit(m.group(2)!);
-        return (v, u);
-      }
-      return null;
-    }
-
-    (double?, String?)? _fromLineGramMl(String line) {
-      // Only accept g/ml here if the line *mentions serving* to avoid “fat 2 g”.
-      if (!RegExp(r'\bserv', caseSensitive: false).hasMatch(line)) return null;
-      final m = RegExp(
-        r'(?<![a-z])([0-9]+(?:[./][0-9]+)?)\s*(g|gram|grams|ml|milliliter|milliliters)\b',
-        caseSensitive: false,
-      ).firstMatch(line);
-      if (m != null) {
-        final v = _toDouble(m.group(1)!);
-        final u = _normUnit(m.group(2)!);
-        return (v, u);
-      }
-      return null;
-    }
-
-    // Rank candidates: 1 = paren g/ml, 2 = volumetric, 3 = g/ml with “serv”.
-    ({int rank, int dist, (double?, String?) val})? _scoreLine(int idx) {
-      final line = lines[idx];
-      if (_looksLikeNutrientRow(line)) return null;
-
-      final p = _fromLineParen(line);
-      if (p != null) return (rank: 1, dist: (ssLineIdx - idx).abs(), val: p);
-
-      final v = _fromLineVol(line);
-      if (v != null) return (rank: 2, dist: (ssLineIdx - idx).abs(), val: v);
-
-      final g = _fromLineGramMl(line);
-      if (g != null) return (rank: 3, dist: (ssLineIdx - idx).abs(), val: g);
-
-      return null;
-    }
-
-    // A) Prefer a window after “serving size”
-    if (ssLineIdx != -1) {
-      final end = (ssLineIdx + 25).clamp(0, lines.length - 1);
-      final candidates = <({int rank, int dist, (double?, String?) val})>[];
-      for (int j = ssLineIdx + 1; j <= end; j++) {
-        final scored = _scoreLine(j);
-        if (scored != null) candidates.add(scored);
-      }
-      if (candidates.isNotEmpty) {
-        candidates.sort((a, b) {
-          final r = a.rank.compareTo(b.rank);
-          return r != 0 ? r : a.dist.compareTo(b.dist);
-        });
-        return candidates.first.val;
-      }
-    }
-
-    // B) Fallback: scan entire doc with same scoring; prefer closest to ssLineIdx if known
-    final all = <({int rank, int dist, (double?, String?) val})>[];
-    for (int j = 0; j < lines.length; j++) {
-      final scored = _scoreLine(j);
-      if (scored != null) all.add(scored);
-    }
-    if (all.isNotEmpty) {
-      all.sort((a, b) {
-        final r = a.rank.compareTo(b.rank);
-        if (r != 0) return r;
-        // If we found the “serving size” header, prefer candidates closer to it
-        if (ssLineIdx != -1) return a.dist.compareTo(b.dist);
-        return 0;
-      });
-      return all.first.val;
-    }
-
-    return (null, null);
+  // normalize helper (reuse your existing _normUnit / _toDouble)
+  (double?, String?) _fromParen(String s) {
+    final m = RegExp(r'\((\d+(?:[.,]\d+)?)\s*(g|gram|grams|ml|milliliter|milliliters)\b',
+            caseSensitive: false)
+        .firstMatch(s);
+    if (m == null) return (null, null);
+    return (_toDouble(m.group(1)!), _normUnit(m.group(2)!));
   }
+
+  (double?, String?) _fromVolume(String s) {
+    // e.g. "2 Tbsp", "1 tsp", "1/2 cup", "0.5 oz"
+    final m = RegExp(
+      r'(\d+(?:[./]\d+)?|\d+(?:[.,]\d+)?)\s*(tbsp|tablespoon|tsp|teaspoon|cup|cups|oz|ounce|ounces)\b',
+      caseSensitive: false,
+    ).firstMatch(s);
+    if (m == null) return (null, null);
+    final v = _toDouble(m.group(1)!);
+    final u = _normUnit(m.group(2)!);
+    return (v, u);
+  }
+
+  int idx = lines.indexWhere((l) => reSS.hasMatch(l));
+  if (idx == -1) return (null, null);
+
+  // Build a forward window of lines to search
+  final window = <String>[];
+  for (int i = idx; i < lines.length && i <= idx + 80; i++) {
+    if (reDV.hasMatch(lines[i])) break;
+    window.add(lines[i]);
+  }
+  if (window.isEmpty) return (null, null);
+
+  // 1) Prefer a volume unit anywhere in the window
+  for (final s in window) {
+    final vol = _fromVolume(s);
+    if (vol.$1 != null && vol.$2 != null) return vol;
+  }
+
+  // 2) Otherwise, accept grams/ml from parentheses anywhere in the window
+  for (final s in window) {
+    final par = _fromParen(s);
+    if (par.$1 != null && par.$2 != null) return par;
+  }
+
+  return (null, null);
+}
 
 
   static String _normUnit(String u) {
