@@ -1,5 +1,3 @@
-import 'package:flutter/foundation.dart';
-
 class NutritionParseResult {
   final double? servingSizeValue;
   final String? servingSizeUnit; // normalized: g, ml, cup, tbsp, tsp, oz
@@ -53,11 +51,21 @@ class NutritionParseResult {
       };
 }
 
-// Top-level function so NutritionOcrService can call:
-//   compute(parseNutritionLabel, recognized.text)
-NutritionParseResult parseNutritionLabel(String rawText) {
-  return NutritionOcrParser.parse(rawText);
-}
+  // Accepts a payload from the isolate: { rawText: String, geoLines: List<Map{t,y}> }
+  NutritionParseResult parseNutritionLabelWithGeo(Map<String, dynamic> payload) {
+    final raw = (payload['rawText'] as String?) ?? '';
+    final geo = (payload['geoLines'] as List?)
+    ?.cast<Map<String, dynamic>>() 
+    ?? const <Map<String, dynamic>>[];
+
+    return NutritionOcrParser.parse(raw, geoLines: geo);
+  }
+
+  // Top-level function so NutritionOcrService can call:
+  //   compute(parseNutritionLabel, recognized.text)
+  NutritionParseResult parseNutritionLabel(String rawText) {
+    return NutritionOcrParser.parse(rawText);
+  }
 
 class NutritionOcrParser {
   // A flat list of all aliases so we can detect “different nutrient rows”.
@@ -76,7 +84,7 @@ class NutritionOcrParser {
     'protein',
   ];
 
-  static NutritionParseResult parse(String rawText) {
+  static NutritionParseResult parse(String rawText, {List<Map<String, dynamic>>? geoLines}) {
     final text = _norm(rawText);
     final lines = text
         .split('\n')
@@ -84,7 +92,6 @@ class NutritionOcrParser {
         .where((l) => l.isNotEmpty)
         .toList();
 
-    for (final l in lines) debugPrint('LINES >>> $l');
     // ---- Serving size -------------------------------------------------------
     final ss = _parseServingSize(lines);
 
@@ -97,13 +104,10 @@ class NutritionOcrParser {
 
     final cholesterolMg = _valueFor(lines, ['cholesterol'], unit: 'mg');
     final sodiumMg      = _valueFor(lines, ['sodium'],      unit: 'mg');
-
     final carbsG  = _valueFor(lines, ['total carbohydrate','total carbs','carbohydrate','carbs'], unit: 'g');
     final fiberG  = _valueFor(lines, ['dietary fiber','fiber'],                                   unit: 'g');
     final sugarG  = _valueFor(lines, ['total sugars','sugars','sugar'],                           unit: 'g');
     final addSugG = _extractAddedSugars(lines);
-
-
     final proteinG = _valueFor(lines, ['protein'], unit: 'g');
 
     // ---- Sanity fixes (tame OCR outliers) ----------------------------------
@@ -118,7 +122,12 @@ class NutritionOcrParser {
     final fixedFiber = _cap(fiberG, carbsG);     // fiber ≤ carbs
 
     // ---- Calories -----------------------------------------------------------
-    double? calories = _extractCalories(lines);
+
+   double? calories;
+    if (geoLines != null && geoLines.isNotEmpty) {
+      calories = _extractCaloriesGeo(geoLines);
+    }
+    calories ??= _extractCalories(lines);
 
     double? _kcalFromMacros(double? fatG, double? carbsG, double? proteinG) {
       if (fatG == null && carbsG == null && proteinG == null) return null;
@@ -151,41 +160,64 @@ class NutritionOcrParser {
     );
   }
 
-  /// Parse “Serving size 2 Tbsp (16g)”, “Serving size 1/2 cup”, etc.
-  /// Returns (value, unit) where unit is normalized: g, ml, cup, tbsp, tsp, oz.
-  static (double?, String?) _parseServingSize(List<String> lines) {
-    final ssLineIdx = lines.indexWhere(
-      (l) => l.contains(RegExp(r'\bserving\s*size\b', caseSensitive: false)),
-    );
-    if (ssLineIdx == -1) return (null, null);
+/// Parse “Serving size 2 Tbsp (16g)”, “Serving size 1 tsp (3g)”, etc.
+/// Returns (value, unit) where unit is normalized: g, ml, cup, tbsp, tsp, oz.
+/// Strategy:
+///   1) Find the line that says “serving size”
+///   2) Scan forward up to ~80 lines or until we hit “% daily value”
+///   3) Prefer explicit volume units next to a number (tbsp/tsp/cup/oz)
+///   4) Otherwise, accept grams/ml in parentheses “(16 g)”
+static (double?, String?) _parseServingSize(List<String> lines) {
+  final reSS = RegExp(r'\bserving\s*size\b', caseSensitive: false);
+  final reDV = RegExp(r'%\s*daily\s*value', caseSensitive: false);
 
-    final candidates = <String>[lines[ssLineIdx]];
-    if (ssLineIdx + 1 < lines.length) candidates.add(lines[ssLineIdx + 1]);
-    final joined = candidates.join(' ');
-
-    // Prefer explicit grams/ml in parens: “… (16g)” or “… (240 ml)”
-    final paren = RegExp(
-      r'\((\d+(?:[.,]\d+)?)\s*(g|gram|grams|ml|milliliter|milliliters)\b',
-      caseSensitive: false,
-    ).firstMatch(joined);
-    if (paren != null) {
-      final v = _toDouble(paren.group(1)!);
-      final u = _normUnit(paren.group(2)!);
-      return (v, u);
-    }
-
-    // Otherwise: “serving size 2 Tbsp”, “1/2 cup”, etc.
-    final m = RegExp(
-      r'serving\s*size[:\s-]*([0-9]+(?:[./][0-9]+)?)\s*([a-zA-Z]+)',
-      caseSensitive: false,
-    ).firstMatch(joined);
-    if (m != null) {
-      final v = _toDouble(m.group(1)!);
-      final rawUnit = m.group(2)!;
-      return (v, _normUnit(rawUnit));
-    }
-    return (null, null);
+  // normalize helper (reuse your existing _normUnit / _toDouble)
+  (double?, String?) _fromParen(String s) {
+    final m = RegExp(r'\((\d+(?:[.,]\d+)?)\s*(g|gram|grams|ml|milliliter|milliliters)\b',
+            caseSensitive: false)
+        .firstMatch(s);
+    if (m == null) return (null, null);
+    return (_toDouble(m.group(1)!), _normUnit(m.group(2)!));
   }
+
+  (double?, String?) _fromVolume(String s) {
+    // e.g. "2 Tbsp", "1 tsp", "1/2 cup", "0.5 oz"
+    final m = RegExp(
+      r'(\d+(?:[./]\d+)?|\d+(?:[.,]\d+)?)\s*(tbsp|tablespoon|tsp|teaspoon|cup|cups|oz|ounce|ounces)\b',
+      caseSensitive: false,
+    ).firstMatch(s);
+    if (m == null) return (null, null);
+    final v = _toDouble(m.group(1)!);
+    final u = _normUnit(m.group(2)!);
+    return (v, u);
+  }
+
+  int idx = lines.indexWhere((l) => reSS.hasMatch(l));
+  if (idx == -1) return (null, null);
+
+  // Build a forward window of lines to search
+  final window = <String>[];
+  for (int i = idx; i < lines.length && i <= idx + 80; i++) {
+    if (reDV.hasMatch(lines[i])) break;
+    window.add(lines[i]);
+  }
+  if (window.isEmpty) return (null, null);
+
+  // 1) Prefer a volume unit anywhere in the window
+  for (final s in window) {
+    final vol = _fromVolume(s);
+    if (vol.$1 != null && vol.$2 != null) return vol;
+  }
+
+  // 2) Otherwise, accept grams/ml from parentheses anywhere in the window
+  for (final s in window) {
+    final par = _fromParen(s);
+    if (par.$1 != null && par.$2 != null) return par;
+  }
+
+  return (null, null);
+}
+
 
   static String _normUnit(String u) {
     final t = u.toLowerCase();
@@ -302,74 +334,118 @@ class NutritionOcrParser {
   }
 
 
-    /// Calories line: grab the integer nearest *after* the word "calories".
+  // Calories: grab the big standalone integer that appears after "calories".
+  // We DO NOT stop at "% Daily Value" because some labels OCR that block
+  // before the headline number. Only accept digits-only lines in [5..1200].
+  static double? _extractCalories(List<String> lines) {
+    final reCal = RegExp(r'\bcalories\b', caseSensitive: false);
 
-   /// Calories line: pick the best integer *after* the word "calories".
-/// Scans a window until we hit a section fence (e.g. "% Daily Value").
-/// Uses scoring so the big standalone number wins over DV/units rows.
-/// Robustly extract kcal near the "Calories" label.
-/// Strategy:
-///  - After the first line that contains "calories", scan forward.
-///  - If we see a **digits-only** line (20..1200) within ~30 lines,
-///    return it immediately. This matches the big headline number.
-///  - Otherwise, collect candidates and pick the best by a small score.
-///  - Only fence by "% Daily Value" so we don't miss a late headline.
-static double? _extractCalories(List<String> lines) {
-  final reCal   = RegExp(r'\bcalories\b', caseSensitive: false);
-  final reDV    = RegExp(r'%\s*daily\s*value', caseSensitive: false);
+    String _stripWeird(String s) => s
+        .replaceAll('\u200E', '')
+        .replaceAll('\u200F', '')
+        .replaceAll('\u200B', '')
+        .replaceAll('\u200C', '')
+        .replaceAll('\u200D', '')
+        .replaceAll('\u00A0', ' ')
+        .replaceAll('\u00AD', '')
+        .replaceAll(RegExp(r'[\u202A-\u202E]'), '')
+        .replaceAll('|', ' ')
+        .trim();
 
-  // strip common invisibles / bidi / NBSP / soft hyphen etc.
-  String _stripWeird(String s) => s
-      .replaceAll('\u200E', '')
-      .replaceAll('\u200F', '')
-      .replaceAll('\u200B', '')
-      .replaceAll('\u200C', '')
-      .replaceAll('\u200D', '')
-      .replaceAll('\u00A0', ' ')
-      .replaceAll('\u00AD', '')
-      .replaceAll(RegExp(r'[\u202A-\u202E]'), '')
-      .replaceAll('|', ' ')
-      .trim();
+    // Accept a naked integer line; tolerate a single trailing bracket/dot.
+    bool _isHeadlineNumber(String s) {
+      final t0 = _stripWeird(s);
+      final t = t0.replaceAllMapped(RegExp(r'(?<=\b)(\d)[oO](?=\b)'), (m) => '${m[1]}0');
 
-  // detect a pure integer line (no letters, no units, one number)
-  bool _isHeadlineNumber(String s) {
-    final c = _stripWeird(s);
-    // common OCR “6o” => “60”
-    final fix = c.replaceAllMapped(RegExp(r'(?<=\b)(\d)[oO](?=\b)'), (m) => '${m[1]}0');
-    // if any letters exist, bail (we only want a naked number line)
-    if (RegExp(r'[a-z]', caseSensitive: false).hasMatch(fix)) return false;
-    // must not contain obvious units or percent
-    if (RegExp(r'(?:%|\bg\b|\bmg\b|\bkcal\b|\bcal\b)', caseSensitive: false).hasMatch(fix)) {
-      return false;
+      // reject lines that contain letters or obvious units/percents
+      if (RegExp(r'[a-z]', caseSensitive: false).hasMatch(t)) return false;
+      if (RegExp(r'(?:%|\bg\b|\bmg\b|\bkcal\b|\bcal\b)', caseSensitive: false).hasMatch(t)) {
+        return false;
+      }
+
+      // allow optional right bracket or dot after the integer
+      final m = RegExp(r'^\s*(\d{1,4})\s*[\)\]\.]?\s*$').firstMatch(t);
+      if (m == null) return false;
+
+      final v = int.tryParse(m.group(1)!);
+      return v != null && v >= 5 && v <= 1200; // <— lowered min from 20 → 5
     }
-    // must be exactly one integer token and line must be that token
-    final m = RegExp(r'^\s*(\d{1,4})\s*$').firstMatch(fix);
-    if (m == null) return false;
-    final v = int.tryParse(m.group(1)!);
-    return v != null && v >= 20 && v <= 1200;
+
+    for (var i = 0; i < lines.length; i++) {
+      if (!reCal.hasMatch(lines[i])) continue;
+
+      // scan forward generously; don't fence at "% Daily Value"
+      for (int j = i + 1; j < lines.length && j <= i + 80; j++) {
+        final s = lines[j];
+        if (_isHeadlineNumber(s)) {
+          final v = int.parse(RegExp(r'(\d{1,4})').firstMatch(_stripWeird(s))!.group(1)!);
+          return v.toDouble();
+        }
+      }
+      return null; // fall back to macro math upstream if needed
+    }
+    return null;
   }
 
-  for (var i = 0; i < lines.length; i++) {
-    if (!reCal.hasMatch(lines[i])) continue;
+  /// Geometry-aware Calories extractor.
+  /// Looks for the first line containing "calories" and then picks the closest
+  /// *digits-only* line *below* it (ignores anything with units/%/letters).
+  /// `geoLines` is a List<Map>{ 't': String, 'y': double } sorted by y asc.
+  static double? _extractCaloriesGeo(List<Map<String, dynamic>> geoLines) {
+    double? _toDoubleInt(String s) {
+      final m = RegExp(r'^\s*(\d{1,4})\s*$').firstMatch(s);
+      if (m == null) return null;
+      final v = int.tryParse(m.group(1)!);
+      if (v == null) return null;
+      // Reasonable kcal range
+      if (v < 5 || v > 2000) return null;
+      return v.toDouble();
+    }
 
-    // look ahead until "% Daily Value"
-    for (int j = i + 1; j < lines.length && j <= i + 80; j++) {
-      final s = lines[j];
-      if (reDV.hasMatch(s)) break;
-      if (_isHeadlineNumber(s)) {
-        final v = int.parse(RegExp(r'(\d{1,4})').firstMatch(_stripWeird(s))!.group(1)!);
-        debugPrint('Calories candidate (headline) => $v from line: "$s"');        
-        return v.toDouble(); // <- should return 60 for your label
+    String _clean(String s) => s
+        .replaceAll('\u200E', '')
+        .replaceAll('\u200F', '')
+        .replaceAll('\u200B', '')
+        .replaceAll('\u200C', '')
+        .replaceAll('\u200D', '')
+        .replaceAll('\u00A0', ' ')
+        .replaceAll('\u00AD', '')
+        .trim()
+        .toLowerCase();
+
+    // Find the "calories" anchor
+    final idxCal = geoLines.indexWhere((m) {
+      final t = _clean((m['t'] ?? '').toString());
+      return t.contains(RegExp(r'\bcalories\b'));
+    });
+    if (idxCal == -1) return null;
+
+    final yCal = (geoLines[idxCal]['y'] as num).toDouble();
+
+    // Candidate = digits-only lines after the anchor, without units/%/letters
+    final candidates = <Map<String, dynamic>>[];
+    for (var i = idxCal + 1; i < geoLines.length && i <= idxCal + 60; i++) {
+      final tRaw = (geoLines[i]['t'] ?? '').toString();
+      final y = (geoLines[i]['y'] as num).toDouble();
+      final t = _clean(tRaw);
+
+      // Must be below, and not a %DV / units line
+      if (y <= yCal) continue;
+      if (RegExp(r'(?:%|\bg\b|\bmg\b|\bkcal\b|\bcal\b)').hasMatch(t)) continue;
+
+      final v = _toDoubleInt(t);
+      if (v != null) {
+        candidates.add({'v': v, 'y': y, 't': tRaw});
       }
     }
 
-    // If we didn’t find a pure headline, don’t guess.
-    return null;
+    if (candidates.isEmpty) return null;
+
+    // Choose the numerically reasonable one closest to yCal
+    candidates.sort((a, b) => (a['y'] as double).compareTo(b['y'] as double));
+    // Usually the first one below is the big headline number
+    return (candidates.first['v'] as double);
   }
-  return null;
-}
-
-
 
 /// Robustly parse “Includes 2 g Added Sugars”, “Incl. 2g added sugars”, etc.
 /// Returns the number of grams if found, else null.

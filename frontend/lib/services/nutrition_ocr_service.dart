@@ -17,20 +17,31 @@ class NutritionOcrService {
   /// Run ML Kit on [imageFile], then parse the recognized text on a background
   /// isolate. Throws on errors (UI can catch and show a message).
   Future<NutritionParseResult> extract(File imageFile) async {
-    try {
-      final input = InputImage.fromFile(imageFile);
-      final recognized = await _recognizer.processImage(input);
+    final input = InputImage.fromFile(imageFile);
+    final recognized = await _recognizer.processImage(input);
 
-      final raw = recognized.text; // already includes line breaks
-      // Offload parsing to keep UI smooth.
-      debugPrint('OCR RAW >>> ${recognized.text}');
-      return await compute(parseNutritionLabel, raw);
-    } catch (e, st) {
-      debugPrint('NutritionOcrService.extract error: $e\n$st');
-      rethrow;
+    // Collect lightweight (text, y) geo lines for layout-aware parsing.
+    final geoLines = <Map<String, dynamic>>[];
+    for (final block in recognized.blocks) {
+      for (final line in block.lines) {
+        // y from boundingBox if present, otherwise min(cornerPoints.y)
+        final y = line.boundingBox?.top ??
+            (line.cornerPoints?.map((pt) => pt.y).reduce((a, b) => a < b ? a : b) ?? 0);
+        geoLines.add({'t': line.text, 'y': y.toDouble()});
+      }
     }
-  }
+    // Sort by vertical position, top → bottom (not strictly necessary but nice)
+    geoLines.sort((a, b) => (a['y'] as double).compareTo(b['y'] as double));
 
+    // Offload parsing to an isolate (needs a simple map payload).
+    final payload = {
+      'rawText': recognized.text,
+      'geoLines': geoLines,
+    };
+    final result = await compute(parseNutritionLabelWithGeo, payload);
+    return result;
+  }
+  
   /// Directly parse raw text (useful for unit tests or debugging).
   Future<NutritionParseResult> extractFromText(String raw) async {
     try {
