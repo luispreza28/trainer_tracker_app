@@ -51,11 +51,21 @@ class NutritionParseResult {
       };
 }
 
-// Top-level function so NutritionOcrService can call:
-//   compute(parseNutritionLabel, recognized.text)
-NutritionParseResult parseNutritionLabel(String rawText) {
-  return NutritionOcrParser.parse(rawText);
-}
+  // Accepts a payload from the isolate: { rawText: String, geoLines: List<Map{t,y}> }
+  NutritionParseResult parseNutritionLabelWithGeo(Map<String, dynamic> payload) {
+    final raw = (payload['rawText'] as String?) ?? '';
+    final geo = (payload['geoLines'] as List?)
+    ?.cast<Map<String, dynamic>>() 
+    ?? const <Map<String, dynamic>>[];
+
+    return NutritionOcrParser.parse(raw, geoLines: geo);
+  }
+
+  // Top-level function so NutritionOcrService can call:
+  //   compute(parseNutritionLabel, recognized.text)
+  NutritionParseResult parseNutritionLabel(String rawText) {
+    return NutritionOcrParser.parse(rawText);
+  }
 
 class NutritionOcrParser {
   // A flat list of all aliases so we can detect “different nutrient rows”.
@@ -74,7 +84,7 @@ class NutritionOcrParser {
     'protein',
   ];
 
-  static NutritionParseResult parse(String rawText) {
+  static NutritionParseResult parse(String rawText, {List<Map<String, dynamic>>? geoLines}) {
     final text = _norm(rawText);
     final lines = text
         .split('\n')
@@ -82,7 +92,6 @@ class NutritionOcrParser {
         .where((l) => l.isNotEmpty)
         .toList();
 
-    for (final l in lines) print('LINES >>> $l');
     // ---- Serving size -------------------------------------------------------
     final ss = _parseServingSize(lines);
 
@@ -92,16 +101,12 @@ class NutritionOcrParser {
     final fatG       = _valueFor(lines, ['total fat', 'fat'],            unit: 'g');
     final satFatG    = _valueFor(lines, ['saturated fat', 'sat fat'],    unit: 'g');
     final transFatG  = _valueFor(lines, ['trans fat', 'trans'],          unit: 'g');
-
     final cholesterolMg = _valueFor(lines, ['cholesterol'], unit: 'mg');
     final sodiumMg      = _valueFor(lines, ['sodium'],      unit: 'mg');
-
     final carbsG  = _valueFor(lines, ['total carbohydrate','total carbs','carbohydrate','carbs'], unit: 'g');
     final fiberG  = _valueFor(lines, ['dietary fiber','fiber'],                                   unit: 'g');
     final sugarG  = _valueFor(lines, ['total sugars','sugars','sugar'],                           unit: 'g');
     final addSugG = _extractAddedSugars(lines);
-
-
     final proteinG = _valueFor(lines, ['protein'], unit: 'g');
 
     // ---- Sanity fixes (tame OCR outliers) ----------------------------------
@@ -116,7 +121,11 @@ class NutritionOcrParser {
     final fixedFiber = _cap(fiberG, carbsG);     // fiber ≤ carbs
 
     // ---- Calories -----------------------------------------------------------
-    double? calories = _extractCalories(lines);
+   double? calories;
+    if (geoLines != null && geoLines.isNotEmpty) {
+      calories = _extractCaloriesGeo(geoLines);
+    }
+    calories ??= _extractCalories(lines);
 
     double? _kcalFromMacros(double? fatG, double? carbsG, double? proteinG) {
       if (fatG == null && carbsG == null && proteinG == null) return null;
@@ -374,6 +383,66 @@ static (double?, String?) _parseServingSize(List<String> lines) {
       return null; // fall back to macro math upstream if needed
     }
     return null;
+  }
+
+  /// Geometry-aware Calories extractor.
+  /// Looks for the first line containing "calories" and then picks the closest
+  /// *digits-only* line *below* it (ignores anything with units/%/letters).
+  /// `geoLines` is a List<Map>{ 't': String, 'y': double } sorted by y asc.
+  static double? _extractCaloriesGeo(List<Map<String, dynamic>> geoLines) {
+    double? _toDoubleInt(String s) {
+      final m = RegExp(r'^\s*(\d{1,4})\s*$').firstMatch(s);
+      if (m == null) return null;
+      final v = int.tryParse(m.group(1)!);
+      if (v == null) return null;
+      // Reasonable kcal range
+      if (v < 5 || v > 2000) return null;
+      return v.toDouble();
+    }
+
+    String _clean(String s) => s
+        .replaceAll('\u200E', '')
+        .replaceAll('\u200F', '')
+        .replaceAll('\u200B', '')
+        .replaceAll('\u200C', '')
+        .replaceAll('\u200D', '')
+        .replaceAll('\u00A0', ' ')
+        .replaceAll('\u00AD', '')
+        .trim()
+        .toLowerCase();
+
+    // Find the "calories" anchor
+    final idxCal = geoLines.indexWhere((m) {
+      final t = _clean((m['t'] ?? '').toString());
+      return t.contains(RegExp(r'\bcalories\b'));
+    });
+    if (idxCal == -1) return null;
+
+    final yCal = (geoLines[idxCal]['y'] as num).toDouble();
+
+    // Candidate = digits-only lines after the anchor, without units/%/letters
+    final candidates = <Map<String, dynamic>>[];
+    for (var i = idxCal + 1; i < geoLines.length && i <= idxCal + 60; i++) {
+      final tRaw = (geoLines[i]['t'] ?? '').toString();
+      final y = (geoLines[i]['y'] as num).toDouble();
+      final t = _clean(tRaw);
+
+      // Must be below, and not a %DV / units line
+      if (y <= yCal) continue;
+      if (RegExp(r'(?:%|\bg\b|\bmg\b|\bkcal\b|\bcal\b)').hasMatch(t)) continue;
+
+      final v = _toDoubleInt(t);
+      if (v != null) {
+        candidates.add({'v': v, 'y': y, 't': tRaw});
+      }
+    }
+
+    if (candidates.isEmpty) return null;
+
+    // Choose the numerically reasonable one closest to yCal
+    candidates.sort((a, b) => (a['y'] as double).compareTo(b['y'] as double));
+    // Usually the first one below is the big headline number
+    return (candidates.first['v'] as double);
   }
 
 
