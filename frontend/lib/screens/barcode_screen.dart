@@ -11,6 +11,8 @@ import '../services/goals_service.dart';
 import '../services/tz_service.dart';
 import '../services/file_saver.dart';
 import '../services/export_service.dart';
+import 'package:frontend/screens/label_scan_screen.dart';
+
 
 class BarcodeScreen extends StatefulWidget {
   static const routeName = '/barcode';
@@ -241,6 +243,25 @@ class _BarcodeScreenState extends State<BarcodeScreen> {
     }
   }
 
+  // Opens the nutrition label scanner and shows a quick result note.
+  Future<void> _openLabelScan() async {
+    final result = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute(
+        builder: (_) => const LabelScanScreen(),
+        fullscreenDialog: true,
+      ),
+    );
+
+    if (!mounted || result == null) return;
+
+    // Simple feedback on return — you can wire this into a form later.
+    final filled = result.entries.where((e) => e.value != null && e.value.toString().isNotEmpty).length;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Parsed $filled fields from label')),
+    );
+  }
+
+
   @override
   Widget build(BuildContext context) {
     final f = _food;
@@ -338,6 +359,16 @@ class _BarcodeScreenState extends State<BarcodeScreen> {
                       icon: const Icon(Icons.refresh),
                     ),
                   ],
+                ),
+              ),
+
+              // --- Scan nutrition label button (placed under the date row) ---
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: _openLabelScan,
+                  icon: const Icon(Icons.document_scanner_outlined),
+                  label: const Text('Scan nutrition label'),
                 ),
               ),
 

@@ -2,6 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../services/api_client.dart';
+import '../screens/label_scan_screen.dart';
+
 
 class AddToMealScreen extends StatefulWidget {
   final int foodId;
@@ -17,6 +19,7 @@ class AddToMealScreen extends StatefulWidget {
 }
 
 class _AddToMealScreenState extends State<AddToMealScreen> {
+  Map<String, dynamic>? _scannedNutrition; // holds result from label scanner
   final _gramsCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
   DateTime _when = DateTime.now();
@@ -29,6 +32,64 @@ class _AddToMealScreenState extends State<AddToMealScreen> {
       widget.defaultGrams.truncateToDouble() == widget.defaultGrams ? 0 : 1,
     );
   }
+
+  Future<void> _openLabelScan() async {
+    final result = await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const LabelScanScreen(),
+        fullscreenDialog: true,
+      ),
+    );
+
+    if (!mounted || result == null) return;
+
+    setState(() {
+      _scannedNutrition = result;
+      // If your form has only "grams", you can prefill it from the parsed serving size:
+      final g = result['serving_size_g'];
+      if ((_gramsCtrl.text.isEmpty || _gramsCtrl.text == '0') && g is num) {
+        _gramsCtrl.text = g.toStringAsFixed(0);
+      }
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Nutrition parsed from label. Review & Save.')),
+    );
+  }
+
+  Future<void> _onScanLabelPressed() async {
+    final res = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute(builder: (_) => const LabelScanScreen()),
+    );
+    if (!mounted || res == null) return;
+
+    // Debug once to see what the scanner returned
+    // (comment out later)
+    // ignore: avoid_print
+    print('LabelScan result: $res');
+
+    double? _num(String k) {
+      final v = res[k];
+      if (v == null) return null;
+      if (v is num) return v.toDouble();
+      if (v is String) return double.tryParse(v);
+      return null;
+    }
+
+    // Helper: try multiple keys, use the first that exists
+    double? _firstNum(Iterable<String> keys) {
+      for (final k in keys) {
+        final n = _num(k);
+        if (n != null) return n;
+      }
+      return null;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Nutrition fields filled from label scan')),
+    );
+  }
+
 
   @override
   void dispose() {
@@ -131,6 +192,14 @@ class _AddToMealScreenState extends State<AddToMealScreen> {
                 ),
               ],
             ),
+
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: _openLabelScan,
+              icon: const Icon(Icons.document_scanner_outlined),
+              label: const Text('Scan nutrition label'),
+            ),
+
             const Spacer(),
             SizedBox(
               width: double.infinity,
