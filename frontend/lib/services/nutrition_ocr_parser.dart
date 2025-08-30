@@ -101,6 +101,7 @@ class NutritionOcrParser {
     final fatG       = _valueFor(lines, ['total fat', 'fat'],            unit: 'g');
     final satFatG    = _valueFor(lines, ['saturated fat', 'sat fat'],    unit: 'g');
     final transFatG  = _valueFor(lines, ['trans fat', 'trans'],          unit: 'g');
+
     final cholesterolMg = _valueFor(lines, ['cholesterol'], unit: 'mg');
     final sodiumMg      = _valueFor(lines, ['sodium'],      unit: 'mg');
     final carbsG  = _valueFor(lines, ['total carbohydrate','total carbs','carbohydrate','carbs'], unit: 'g');
@@ -121,6 +122,7 @@ class NutritionOcrParser {
     final fixedFiber = _cap(fiberG, carbsG);     // fiber ≤ carbs
 
     // ---- Calories -----------------------------------------------------------
+
    double? calories;
     if (geoLines != null && geoLines.isNotEmpty) {
       calories = _extractCaloriesGeo(geoLines);
@@ -444,8 +446,6 @@ static (double?, String?) _parseServingSize(List<String> lines) {
     // Usually the first one below is the big headline number
     return (candidates.first['v'] as double);
   }
-
-
 
 /// Robustly parse “Includes 2 g Added Sugars”, “Incl. 2g added sugars”, etc.
 /// Returns the number of grams if found, else null.
