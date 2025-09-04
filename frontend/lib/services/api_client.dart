@@ -190,5 +190,64 @@ class ApiClient {
   }) {
     return getDailySummary(date, tz);
   }
+
+  Future<Food> createFood({
+    required String name,
+    NutrientsPer100g? nutrients,
+    String? brand,
+  }) async {
+    final uri = _u('/foods/');
+    final headers = await _headers();
+    final body = {
+      'name': name,
+      if (brand != null && brand.isNotEmpty) 'brand': brand,
+      if (nutrients != null) 'nutrients': nutrients.toJson(),
+    };
+
+    final resp = await http
+        .post(uri, headers: headers, body: json.encode(body))
+        .timeout(const Duration(seconds: 15));
+
+    final status = resp.statusCode;
+    if (status != 201 && status != 200) {
+      throw ApiException('HTTP $status: ${resp.body}');
+    }
+
+    final Map<String, dynamic> j = json.decode(resp.body) as Map<String, dynamic>;
+    return Food.fromJson(j);
+  }
+
+  Future<Food> createCustomFood({
+    required String name,
+    required NutrientsPer100g nutrients,
+    String? brand,
+  }) async {
+    final uri = _u('/foods/custom/');
+    final headers = await _headers();
+    final body = {
+      'name': name,
+      if (brand != null && brand.isNotEmpty) 'brand': brand,
+      'nutrients': nutrients.toJson(),
+    };
+
+    http.Response resp;
+    try {
+      resp = await http
+          .post(uri, headers: headers, body: json.encode(body))
+          .timeout(const Duration(seconds: 15));
+    } on TimeoutException {
+      throw ApiException('Network timeout');
+    } catch (e) {
+      throw ApiException('Network error: $e');
+    }
+
+    if (resp.statusCode != 201 && resp.statusCode != 200) {
+      throw ApiException('HTTP ${resp.statusCode}: ${resp.body}');
+    }
+
+    final Map<String, dynamic> j = json.decode(resp.body) as Map<String, dynamic>;
+    return Food.fromJson(j);
+  }
+
   
 }

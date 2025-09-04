@@ -13,7 +13,6 @@ import '../services/file_saver.dart';
 import '../services/export_service.dart';
 import 'package:frontend/screens/label_scan_screen.dart';
 
-
 class BarcodeScreen extends StatefulWidget {
   static const routeName = '/barcode';
   const BarcodeScreen({super.key});
@@ -25,7 +24,6 @@ class BarcodeScreen extends StatefulWidget {
 class _BarcodeScreenState extends State<BarcodeScreen> {
   final _codeCtrl = TextEditingController();
   final GlobalKey<_TodaysSummaryCardState> _summaryKey = GlobalKey<_TodaysSummaryCardState>(); // ⬅️ key to call refresh()
-
 
   String _tz = 'America/Los_Angeles';
   DateTime _selectedDate = (() {
@@ -44,6 +42,20 @@ class _BarcodeScreenState extends State<BarcodeScreen> {
     _codeCtrl.dispose();
     super.dispose();
   }
+
+// Allows scanning without importing a barcode first.
+  Future<void> _onScanPressed() async {
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => const LabelScanScreen()),
+    );
+    if (!mounted) return;
+    if (saved == true) {
+      // After a successful POST in the scan flow, refresh the day summary
+      _summaryKey.currentState?.refresh();
+    }
+  }
+
 
   // Export (CSV/JSON)
   void _openExportSheet() async {
@@ -127,7 +139,6 @@ class _BarcodeScreenState extends State<BarcodeScreen> {
 
   String _safeFilename(String s) =>
       s.replaceAll('/', '-').replaceAll(RegExp(r'\s'), '_');
-  
 
   @override
   void initState() {
@@ -244,23 +255,16 @@ class _BarcodeScreenState extends State<BarcodeScreen> {
   }
 
   // Opens the nutrition label scanner and shows a quick result note.
-  Future<void> _openLabelScan() async {
-    final result = await Navigator.of(context).push<Map<String, dynamic>>(
-      MaterialPageRoute(
-        builder: (_) => const LabelScanScreen(),
-        fullscreenDialog: true,
-      ),
+  Future<void> _openLabelScanFor(int foodId) async {
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => LabelScanScreen(foodId: foodId)),
     );
-
-    if (!mounted || result == null) return;
-
-    // Simple feedback on return — you can wire this into a form later.
-    final filled = result.entries.where((e) => e.value != null && e.value.toString().isNotEmpty).length;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Parsed $filled fields from label')),
-    );
+    if (!mounted) return;
+    if (saved == true) {
+      _summaryKey.currentState?.refresh();
+    }
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -366,7 +370,7 @@ class _BarcodeScreenState extends State<BarcodeScreen> {
               Align(
                 alignment: Alignment.centerLeft,
                 child: OutlinedButton.icon(
-                  onPressed: _openLabelScan,
+                  onPressed: _onScanPressed, // always enabled, we guard inside
                   icon: const Icon(Icons.document_scanner_outlined),
                   label: const Text('Scan nutrition label'),
                 ),
@@ -486,7 +490,7 @@ class _TodaysSummaryCardState extends State<TodaysSummaryCard> {
   void initState() {
     super.initState();
     _prepare();
-    _BarcodeScreenState()._loadTz();
+    // removed: _BarcodeScreenState()._loadTz();  // invalid usage
   }
 
   /// Public method so parent can trigger a refresh
@@ -648,7 +652,7 @@ class _TodaysSummaryCardState extends State<TodaysSummaryCard> {
                 const SizedBox(height: 8),
                 if (entries == 0)
                   Text('No meals logged yet.',
-                      style: Theme.of(context).textTheme.bodySmall),              
+                      style: Theme.of(context).textTheme.bodySmall),
                 metricRowVal('calories', 'Calories', nf0.format(totals['calories'] ?? 0), (units['calories'] as String?) ?? 'kcal'),
                 metricRowVal('protein',  'Protein',  nf2.format(totals['protein']  ?? 0), (units['protein']  as String?) ?? 'g'),
                 metricRowVal('carbs',    'Carbs',    nf2.format(totals['carbs']    ?? 0), (units['carbs']    as String?) ?? 'g'),
@@ -687,7 +691,7 @@ class _TodaysMealsListState extends State<TodaysMealsList> {
   void initState() {
     super.initState();
     _prepare();
-    _BarcodeScreenState()._loadTz();
+    // removed: _BarcodeScreenState()._loadTz(); // invalid usage
   }
 
   @override
@@ -850,7 +854,6 @@ class _TodaysMealsListState extends State<TodaysMealsList> {
     );
   }
 }
-
 
 class _MealRow extends StatelessWidget {
   final int id;
