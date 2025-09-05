@@ -10,6 +10,7 @@ import '../services/api_client.dart';
 import '../models/food.dart'; // NutrientsPer100g model
 
 import 'label_review_screen.dart'; // contains LabelReviewResult
+import '../utils/nutrition_math.dart'; 
 
 class LabelScanScreen extends StatefulWidget {
   /// Optional: pass when launched from an existing food flow. Not used for save.
@@ -72,7 +73,10 @@ class _LabelScanScreenState extends State<LabelScanScreen> {
 
       // 3) If user saved: create custom food (per-100g), then log meal with grams eaten
       if (reviewed != null) {
-        final gramsPerServing = _servingSizeInGrams(reviewed.parsed);
+        final gramsPerServing = servingSizeInGrams(
+          reviewed.parsed.servingSizeValue,
+          reviewed.parsed.servingSizeUnit,
+        );
         if (gramsPerServing == null || gramsPerServing <= 0) {
           setState(() {
             _error = 'Set serving unit to g or oz so we can compute grams.';
@@ -81,7 +85,7 @@ class _LabelScanScreenState extends State<LabelScanScreen> {
         }
         final gramsEaten = gramsPerServing * reviewed.servingsEaten;
 
-        final per100 = _toPer100g(reviewed.parsed, gramsPerServing);
+        final per100 = perServingToPer100g(reviewed.parsed, gramsPerServing);
 
         setState(() => _busy = true);
         try {
@@ -123,43 +127,6 @@ class _LabelScanScreenState extends State<LabelScanScreen> {
     }
   }
 
-  /// Convert one serving to grams (supports g/oz)
-  double? _servingSizeInGrams(NutritionParseResult p) {
-    final double? val = p.servingSizeValue;
-    final String? unitRaw = p.servingSizeUnit?.toLowerCase().trim();
-    if (val == null || unitRaw == null) return null;
-
-    switch (unitRaw) {
-      case 'g':
-      case 'gram':
-      case 'grams':
-        return val;
-      case 'oz':
-      case 'ounce':
-      case 'ounces':
-        return val * 28.349523125;
-      default:
-        return null; // ml/cup/tbsp/tsp need density
-    }
-  }
-
-  /// Build per-100g nutrients from per-serving values & grams per serving
-  NutrientsPer100g _toPer100g(NutritionParseResult p, double gramsPerServing) {
-    double? scale(double? perServing) {
-      if (perServing == null || gramsPerServing <= 0) return null;
-      return perServing / gramsPerServing * 100.0;
-    }
-
-    return NutrientsPer100g(
-      calories: scale(p.calories),
-      protein: scale(p.protein_g),
-      carbs:   scale(p.carbs_g),
-      fat:     scale(p.fat_g),
-      fiber:   scale(p.fiber_g),
-      sugar:   scale(p.sugar_g),
-      sodium:  scale(p.sodium_mg),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
